@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepSeek AI视频分镜生成器</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <!-- 引入 jsrsasign 用于 JWT 签名 (智谱AI需要) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsrsasign/10.9.0/jsrsasign-all-min.js"></script>
+    <style>
+        body {
+            background-color: #f8f9fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin-top: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            border: none;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-header {
+            background-color: #f1f8ff;
+            border-bottom: 1px solid #e9ecef;
+            border-radius: 12px 12px 0 0 !important;
+            font-weight: 600;
+        }
+
+        .btn-primary {
+            background: linear-gradient(45deg, #4285f4, #34a853);
+            border: none;
+            font-weight: 600;
+            padding: 12px 24px;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(45deg, #3367d6, #2d8e47);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .form-control:focus, .form-select:focus {
+            border-color: #4285f4;
+            box-shadow: 0 0 0 0.25rem rgba(66, 133, 244, 0.25);
+        }
+
+        header {
+            background: linear-gradient(135deg, #4285f4, #34a853);
+            color: white;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            padding: 2rem !important;
+        }
+
+        header h1 {
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .progress {
+            height: 10px;
+            border-radius: 5px;
+        }
+
+        .progress-bar {
+            background: linear-gradient(90deg, #4285f4, #34a853);
+        }
+
+        footer {
+            margin-top: 3rem;
+            font-size: 0.9rem;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.6; }
+            50% { opacity: 1; }
+            100% { opacity: 0.6; }
+        }
+
+        .loading {
+            animation: pulse 1.5s infinite ease-in-out;
+        }
+
+        .scene-card {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            background-color: #fff;
+            transition: all 0.2s;
+        }
+
+        .scene-card:hover {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .scene-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #e9ecef;
+            padding-bottom: 8px;
+        }
+
+        .scene-title {
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .scene-duration {
+            background-color: #e9ecef;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+        }
+
+        .workflow-step {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .step-number {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background-color: #e9ecef;
+            color: #6c757d;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 15px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        
+        .step-number.active {
+            background-color: #4285f4;
+            color: white;
+        }
+        
+        .step-number.completed {
+            background-color: #34a853;
+            color: white;
+        }
+
+        .step-content {
+            flex-grow: 1;
+        }
+
+        .step-title {
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .step-description {
+            color: #6c757d;
+            font-size: 0.9rem;
+        }
+        
+        .prompt-box {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 0.9rem;
+            margin-top: 5px;
+            position: relative;
+        }
+        
+        /* 新增：可编辑区域样式 */
+        .editable-summary, .editable-style, .editable-prompt {
+            cursor: text;
+            padding: 2px 4px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+        
+        .editable-summary:hover, .editable-style:hover, .editable-prompt:hover {
+            background-color: #e9ecef;
+        }
+
+        .editable-summary:focus, .editable-style:focus, .editable-prompt:focus {
+            background-color: #fff;
+            outline: 2px solid #86b7fe;
+            box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+        }
+        
+        .copy-btn {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            padding: 2px 6px;
+            font-size: 0.8rem;
+        }
+
+        .video-result-container {
+            margin-top: 15px;
+            border-top: 1px dashed #dee2e6;
+            padding-top: 15px;
+        }
+
+        .video-status-badge {
+            font-size: 0.8rem;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                margin-top: 1rem;
+                padding: 0 15px;
+            }
+            
+            header {
+                padding: 1.5rem !important;
+            }
+            
+            .display-4 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="text-center py-4">
+            <h1 class="display-4"><i class="bi bi-camera-reels"></i> DeepSeek AI视频分镜生成器</h1>
+            <p class="lead">智能规划 • 分镜设计 • 自动生成视频</p>
+        </header>
+
+        <main>
+            <!-- API设置 -->
+            <section class="card mb-4">
+                <div class="card-header">
+                    <h5><i class="bi bi-key"></i> API设置</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <!-- DeepSeek 设置 -->
+                        <div class="col-md-6 mb-3">
+                            <h6 class="fw-bold mb-3"><i class="bi bi-chat-text"></i> DeepSeek (文本/分镜)</h6>
+                            <div class="mb-3">
+                                <label class="form-label">API渠道</label>
+                                <div class="btn-group w-100" role="group">
+                                    <input type="radio" class="btn-check" name="apiType" id="officialApi" autocomplete="off">
+                                    <label class="btn btn-outline-primary" for="officialApi">官方API</label>
+                                    
+                                    <input type="radio" class="btn-check" name="apiType" id="thirdPartyApi" autocomplete="off" checked>
+                                    <label class="btn btn-outline-primary" for="thirdPartyApi">第三方API</label>
+                                </div>
+                            </div>
+                            
+                            <!-- 第三方模型选择 (仅在选中第三方时显示) -->
+                            <div class="mb-3 d-none" id="thirdPartyModelSelect">
+                                <label class="form-label">选择模型</label>
+                                <select class="form-select form-select-sm" id="tpModel">
+                                    <option value="DeepSeek-V3.2" selected>DeepSeek-V3.2 (默认)</option>
+                                    <option value="DeepSeek-V3.1">DeepSeek-V3.1 (极速)</option>
+                                </select>
+                            </div>
+
+                            <div class="mb-2">
+                                <label for="apiKey" class="form-label">API Key</label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="apiKey" placeholder="DeepSeek API Key">
+                                    <button class="btn btn-outline-secondary" type="button" id="testApiBtn" title="测试API连接">
+                                        <i class="bi bi-lightning-charge"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <!-- API 状态指示器 -->
+                            <div class="d-flex justify-content-between align-items-center">
+                                <small class="text-muted" id="apiInfo">当前: 第三方 (DeepSeek-V3.2)</small>
+                                <span id="apiStatusBadge" class="badge bg-secondary" style="font-size: 0.7rem; display: none;">未连接</span>
+                            </div>
+                        </div>
+
+                        <!-- 智谱AI 设置 -->
+                        <div class="col-md-6 mb-3 border-start">
+                            <h6 class="fw-bold mb-3"><i class="bi bi-film"></i> 智谱AI (视频生成)</h6>
+                            <div class="mb-3">
+                                <label class="form-label">模型选择</label>
+                                <select class="form-select" id="videoModel" disabled>
+                                    <option value="cogvideox-3" selected>CogVideoX-3 (标准)</option>
+                                </select>
+                            </div>
+                            <div class="mb-2">
+                                <label for="zhipuApiKey" class="form-label">API Key</label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="zhipuApiKey" placeholder="智谱AI API Key">
+                                </div>
+                            </div>
+                            <small class="text-muted">用于将分镜Prompt转换为实际视频</small>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 主题设置 -->
+            <section class="card mb-4">
+                <div class="card-header">
+                    <h5><i class="bi bi-pencil-square"></i> 视频策划</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label for="topic" class="form-label">视频主题/创意</label>
+                        <textarea class="form-control" id="topic" rows="3" placeholder="例如：一个关于未来城市生活的科幻短片，展现高科技与自然的和谐共存..."></textarea>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="sceneCount" class="form-label">分镜数量 (Segments)</label>
+                            <select class="form-select" id="sceneCount">
+                                <option value="1">1个分镜 (单镜头)</option>
+                                <option value="2">2个分镜 (双镜头)</option>
+                                <option value="3">3个分镜 (短视频)</option>
+                                <option value="4" selected>4个分镜</option>
+                                <option value="5">5个分镜</option>
+                                <option value="6">6个分镜</option>
+                                <option value="10">10个分镜 (标准)</option>
+                                <option value="12">12个分镜</option>
+                                <option value="16">16个分镜 (长叙事)</option>
+                                <option value="20">20个分镜 (完整故事)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="col-md-6 mb-3">
+                            <label for="sceneDuration" class="form-label">单镜头时长</label>
+                            <select class="form-select" id="sceneDuration">
+                                <option value="5" selected>5秒 (推荐)</option>
+                                <option value="6">6秒</option>
+                                <option value="7">7秒</option>
+                                <option value="8">8秒</option>
+                                <option value="9">9秒</option>
+                                <option value="10">10秒</option>
+                                <option value="12">12秒</option>
+                                <option value="15">15秒</option>
+                                <option value="20">20秒</option>
+                                <option value="25">25秒</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                         <label for="videoRatio" class="form-label">视频比例</label>
+                         <select class="form-select" id="videoRatio">
+                             <option value="9:16" selected>9:16 (竖屏/短视频)</option>
+                             <option value="16:9">16:9 (横屏/电影感)</option>
+                         </select>
+                    </div>
+
+                    <!-- 细节与旁白偏好 -->
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="detailPreset" class="form-label">脚本细节模式</label>
+                            <select class="form-select" id="detailPreset">
+                                <option value="standard" selected>标准（更快）</option>
+                                <option value="pro">专业细节（Sora风，材质/光影/分段节拍）</option>
+                            </select>
+                            <small class="text-muted">专业模式会输出更长的细节描述与更完整的英文Prompt。</small>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="narrationMode" class="form-label">旁白模式</label>
+                            <select class="form-select" id="narrationMode">
+                                <option value="on" selected>有旁白（中文）</option>
+                                <option value="off">无旁白（只给环境音/音效）</option>
+                            </select>
+                            <small class="text-muted">选择“无旁白”时，旁白字段会返回空字符串。</small>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 工作流程状态 -->
+            <section class="card mb-4">
+                <div class="card-header">
+                    <h5><i class="bi bi-diagram-3"></i> 生成流程</h5>
+                </div>
+                <div class="card-body">
+                    <div class="workflow-step">
+                        <div class="step-number" id="step1-num">1</div>
+                        <div class="step-content">
+                            <div class="step-title">创意构思与结构规划</div>
+                            <div class="step-description">AI分析主题，确立视频基调、受众与核心叙事结构</div>
+                        </div>
+                        <div id="step1-status"></div>
+                    </div>
+                    
+                    <div class="workflow-step">
+                        <div class="step-number" id="step2-num">2</div>
+                        <div class="step-content">
+                            <div class="step-title">分镜脚本细化</div>
+                            <div class="step-description">生成详细的画面描述、运镜指令与旁白文案</div>
+                        </div>
+                        <div id="step2-status"></div>
+                    </div>
+                    
+                    <div class="workflow-step">
+                        <div class="step-number" id="step3-num">3</div>
+                        <div class="step-content">
+                            <div class="step-title">视频生成 (可选)</div>
+                            <div class="step-description">调用智谱AI CogVideoX 模型生成实际视频片段</div>
+                        </div>
+                        <div id="step3-status"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 生成按钮 -->
+            <div class="text-center mb-4">
+                <button type="button" class="btn btn-primary btn-lg px-5" id="generateBtn">
+                    <i class="bi bi-magic"></i> 开始智能策划
+                </button>
+            </div>
+
+            <!-- 生成进度 -->
+            <section class="card mb-4 d-none" id="progressSection">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div class="d-flex align-items-center gap-2">
+                            <span id="statusText" class="fw-bold text-primary">正在初始化...</span>
+                            <button type="button" class="btn btn-sm btn-outline-danger d-none" id="cancelBtn">
+                                <i class="bi bi-x-circle"></i> 中断
+                            </button>
+                        </div>
+                        <span id="progressPercent">0%</span>
+                    </div>
+                    <div class="progress mb-3">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" id="progressBar" role="progressbar" style="width: 0%"></div>
+                    </div>
+                    <div class="text-muted small" id="progressInfo">DeepSeek正在思考中...</div>
+                </div>
+            </section>
+
+            <!-- 分镜结果 -->
+            <section class="card d-none" id="resultSection">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5><i class="bi bi-film"></i> 视频分镜方案</h5>
+                    <div>
+                        <button type="button" class="btn btn-sm btn-outline-primary me-2" id="generateAllVideosBtn" style="display:none">
+                            <i class="bi bi-camera-video"></i> 一键生成所有视频
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-success" id="exportBtn">
+                            <i class="bi bi-download"></i> 导出方案
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="card-body">
+                    <!-- 总体分析 -->
+                    <div class="alert alert-secondary mb-4">
+                        <h6 class="alert-heading fw-bold"><i class="bi bi-lightbulb"></i> 创意分析</h6>
+                        <p class="mb-0 small" id="conceptAnalysis">分析内容将显示在这里...</p>
+                    </div>
+
+                    <!-- 分镜列表 -->
+                    <div id="storyboardContainer">
+                        <!-- 分镜将在这里显示 -->
+                    </div>
+                    
+                    <!-- 生成下一个分镜按钮 -->
+                    <div class="text-center mt-4">
+                        <button type="button" class="btn btn-primary" id="generateNextSceneBtn">
+                            <i class="bi bi-plus"></i> 生成下一个分镜
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 错误提示 -->
+            <div class="alert alert-danger d-none" id="errorAlert" role="alert">
+                <h5><i class="bi bi-exclamation-triangle"></i> 发生错误</h5>
+                <p id="errorMessage" class="mb-0"></p>
+            </div>
+        </main>
+
+        <footer class="text-center py-4 text-muted">
+            <p>Powered by DeepSeek & Zhipu AI | 本工具仅供学习研究</p>
+        </footer>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="deepseek.js"></script>
+</body>
+</html>
