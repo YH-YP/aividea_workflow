@@ -315,8 +315,28 @@
                 </div>
                 <div class="card-body">
                     <div class="mb-3">
-                        <label for="topic" class="form-label">视频主题/创意</label>
-                        <textarea class="form-control" id="topic" rows="3" placeholder="例如：一个关于未来城市生活的科幻短片，展现高科技与自然的和谐共存..."></textarea>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label for="topic" class="form-label mb-0">视频主题/创意</label>
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="toggleTopicOptimizePanel()" title="AI 扩写/优化创意">
+                                <i class="bi bi-stars"></i> AI 优化创意
+                            </button>
+                        </div>
+                        <textarea class="form-control" id="topic" rows="6" placeholder="例如：一个关于未来城市生活的科幻短片，展现高科技与自然的和谐共存..."></textarea>
+                        
+                        <!-- 创意优化面板 -->
+                        <div id="topic-optimize-panel" class="card card-body bg-light mt-2 d-none p-2">
+                            <label class="form-label small fw-bold mb-1">优化/扩写指令（可选）</label>
+                            <div class="input-group input-group-sm mb-2">
+                                <input type="text" class="form-control" id="topic-optimize-input" placeholder="例如：更具电影感，或者只输入一个词如'夏天'让AI发挥...">
+                                <button class="btn btn-primary" id="do-topic-optimize-btn" onclick="optimizeTopic()">
+                                    <i class="bi bi-magic"></i> 执行优化
+                                </button>
+                                <button class="btn btn-outline-secondary" id="undo-topic-btn" onclick="undoOptimizeTopic()" style="display:none" title="撤销上次优化">
+                                    <i class="bi bi-arrow-counterclockwise"></i> 撤销
+                                </button>
+                            </div>
+                            <small class="text-muted">AI 将根据您的简短描述或关键词，扩写为更完整的创意方案。</small>
+                        </div>
                     </div>
                     
                     <div class="row">
