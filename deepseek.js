@@ -219,6 +219,13 @@ async function generateNextSceneData(apiKey, topic, totalScenes, duration, index
 
     const systemPrompt = `你是一位精通AI视频生成的创意总监和分镜师，擅长从复杂主题中提炼核心创意。你的任务是根据主题构思具有高视觉冲击力和情感深度的视频大纲。
 
+**关键注意：**
+用户的输入 [主题] 可能是一份结构化的“策划方案”或“制作规范”。
+**请将这些规范视为“核心参考指南”**，在保持原意图的基础上进行专业的视听化转译：
+1. **风格对齐**：参考输入中定义的画风与光影质感，确保整体调性统一。
+2. **运镜借鉴**：灵活运用输入中建议的运镜方式，根据具体画面张力进行优化。
+3. **元素融合**：自然地将要求的关键细节融入场景，而非生硬堆砌。
+
 **核心目标：**
 将抽象的主题转化为具体的、具有情感共鸣的视觉画面，同时保持创意的深度和独特性。
 
@@ -565,19 +572,12 @@ async function generateSingleSceneDetail(index, externalAbortSignal) {
     const narrationMode = (document.getElementById('narrationMode')?.value || 'on').trim();
     const videoRatio = (document.getElementById('videoRatio')?.value || '9:16').trim();
 
-    // 预设分段：用于要求模型按时间轴写"节拍"级细节（更接近 Sora 专业提示词写法）
-    const segments = (() => {
-        const d = Number(scene.duration || 5);
-        if (d >= 20) return ['0s-6s', '6s-12s', '12s-20s'];
-        if (d >= 15) return ['0s-5s', '5s-10s', '10s-15s'];
-        if (d >= 12) return ['0s-4s', '4s-8s', '8s-12s'];
-        if (d >= 10) return ['0s-3s', '3s-7s', '7s-10s'];
-        if (d >= 9) return ['0s-3s', '3s-6s', '6s-9s'];
-        if (d >= 8) return ['0s-2s', '2s-5s', '5s-8s'];
-        if (d >= 7) return ['0s-2s', '2s-4s', '4s-7s'];
-        if (d >= 6) return ['0s-2s', '2s-4s', '4s-6s'];
-        // 5秒：尽量拆成 3 段，保证有起承转合
-        return ['0s-2s', '2s-4s', '4s-5s'];
+    // 动态分段策略：不再写死时间点，而是告诉 AI 总时长，让它自己规划
+    const duration = Number(scene.duration || 5);
+    const segmentHint = (() => {
+        if (duration >= 15) return "建议分为 3-4 个时间节拍";
+        if (duration >= 8) return "建议分为 2-3 个时间节拍";
+        return "建议分为 2 个时间节拍";
     })();
 
     // UI Loading
@@ -592,9 +592,9 @@ async function generateSingleSceneDetail(index, externalAbortSignal) {
 **核心原则：**
 1. **CogVideoX 偏好：** 模型更喜欢流畅的自然语言描述，而非单纯的关键词堆砌。
 2. **动态优先：** 视频Prompt必须包含明确的“动作”或“运镜”描述，否则生成的视频会像PPT。
-3. **语言规范：** video_prompt 必须是英文，description 和 voiceover 为中文。
-4. **细节密度：** 需要大量“可见的细节”（材质、微动作、光影、颗粒、反射、雾气、雨滴、尘埃等），避免空泛形容词。
-5. **可执行：** 不要写“氛围很高级/很震撼”之类抽象话，必须写清楚镜头里能看到什么、怎么动、光从哪来、反射到哪里。
+3. **视觉密度（重中之重）：** 视觉描述必须达到“显微镜级”精度。必须明确描述：**材质纹理**（如：粗糙的混凝土、丝绸般的水面）、**光影互动**（如：丁达尔效应、边缘轮廓光）、**环境粒子**（如：漂浮的尘埃、飞溅的火星）。
+4. **中英完全对齐（铁律）：** 英文 video_prompt 必须是中文 description 的**像素级翻译**。中文里提到的每一个视觉细节（材质、动作、光影），英文里**必须**有对应的描述，**严禁漏译或简化**。
+5. **可执行性：** 杜绝抽象形容词（如“氛围感”、“震撼”），必须转化为物理描述（如“烟雾缭绕”、“大广角仰拍”）。
 
 **输入上下文：**
 主题：${topic}
@@ -605,36 +605,36 @@ async function generateSingleSceneDetail(index, externalAbortSignal) {
 
         const proRules = detailPreset === 'pro' ? `
 【专业细节模式（必须遵守）】
-1) 输出必须包含“时间轴节拍”（按 ${segments.join(' / ')} 三段来写），每段都要包含：
-   - Visual（可见内容：主体+环境+材质微细节）
-   - Camera（机位/镜头运动/景深变化）
+1) **时间轴自主规划**：本镜头总时长为 ${duration}秒。请根据画面内容逻辑，自主规划时间轴（${segmentHint}），例如 "0s-3s", "3s-${duration}s" 等。
+2) 输出必须包含“时间轴节拍”，每个节拍段落都要包含：
+   - Visual（**视觉描述必须极度具体**：明确指出材质质感（如粗糙/光滑/湿润）、光影方向与色彩、粒子特效（烟雾/火星/灰尘）以及物体的物理状态。**拒绝**“好看的背景”这种空话，要写“墙纸剥落露出红砖的背景”。）
+   - Camera（机位/镜头运动/景深变化，如“85mm镜头聚焦前景，背景虚化”）
    - Lighting（主光源方向、色温倾向、阴影与高光特征）
    - Micro details（至少3个：如水珠挂壁、尘埃漂浮、皮肤/鳞片微反光、蒸汽、纤维、划痕等）
    - Audio（环境音/音效，不要写“背景音乐很好听”这种空话）
- 2) 画幅要求：${videoRatio}（竖屏/横屏请严格遵守）；强调“微距/近景质感”，给出镜头信息（如 85mm macro、f/2.8、浅景深）。
- 3) 英文 video_prompt 必须“与时间轴对应”，用英文显式写出 ${segments.join(' / ')} 三段（例如以 "0s-3s:" 开头），并在每段里同步 Visual/Camera/Lighting 的关键信息。
-4) 英文 video_prompt 必须更完整（不少于140英文词），并包含：主体外观细节、关键动作、环境细节、镜头运动、光影、材质、粒子/体积效果、转场/结尾状态、质量词。
-5) 明确排除项：不要出现字幕/水印/Logo/文字；不要出现额外肢体或畸形；不要出现跳切抖动；避免“过度梦幻导致主体糊成一团”。
-6) description 用中文写得像给导演/摄影/特效看的“可执行脚本”，不是给营销写的文案。
+ 3) 画幅要求：${videoRatio}（竖屏/横屏请严格遵守）；强调“微距/近景质感”，给出镜头信息（如 85mm macro、f/2.8、浅景深）。
+ 4) **中英对齐**：英文 video_prompt 必须显式包含你规划的时间轴标记（如 "0s-3s:"），且**完美包含**上述 Visual/Camera/Lighting/Micro details 的所有内容。不要因为是英文就偷工减料。
+5) 英文 video_prompt 必须更完整（不少于140英文词），并包含：主体外观细节、关键动作、环境细节、镜头运动、光影、材质、粒子/体积效果、转场/结尾状态、质量词。
+6) 明确排除项：不要出现字幕/水印/Logo/文字；不要出现额外肢体或畸形；不要出现跳切抖动；避免“过度梦幻导致主体糊成一团”。
+7) description 用中文写得像给导演/摄影/特效看的“可执行脚本”，不是给营销写的文案。
 ` : '';
 
         const narrationRule = narrationMode === 'off'
             ? '旁白要求：voiceover 返回空字符串 ""，只在 description 的 Audio 中写环境音/音效。'
-            : `旁白要求：voiceover 为中文，尽量口语化但有画面感；按时间轴对应 ${segments.join(' / ')} 分段写，每段1-2句，避免太长。`;
+            : `旁白要求：voiceover 为中文，尽量口语化但有画面感；按你规划的时间轴分段写，每段1-2句，避免太长。`;
 
         const userPrompt = `
 **当前镜头参数：**
 - 画面简述：${scene.summary}
 - 风格指导：${scene.style_guide}
 - 预设时长：${scene.duration}s
-- 时间轴分段：${segments.join(' / ')}
 
 **生成要求：**
 
 ${proRules}
 
 1. **Video Prompt 构建法则 (英文)：**
-   请用自然语言写成一段或按时间轴分段（专业模式必须按时间轴分段），确保画面丰富且稳定，必须包含：
+   请用自然语言写成一段（标准模式）或按时间轴分段（专业模式必须按自主规划的时间轴分段），确保画面丰富且稳定，必须包含：
    * **主体与外观细节**（材质、纹理、微瑕疵、反光）
    * **动作与动态**（关键动作 + 次要微动作 + 粒子/流体/体积效果）
    * **环境与背景**（空间深度、前中后景细节）
@@ -652,10 +652,10 @@ ${proRules}
 
 ${extra ? `4. **用户特别修正指令(最高优先级)：** ${extra}` : ''}
 
-请输出JSON：
+請输出JSON：
 {
-    "description": "详细的画面脚本(中文)。若为专业模式，必须包含时间轴分段（${segments.join(' / ')}）与镜头/光影/材质细节。",
-    "video_prompt": "符合CogVideoX标准的英文Prompt。专业模式下不少于120英文词，并包含材质、光影、镜头运动、粒子/体积效果与结尾状态。",
+    "description": "详细的画面脚本(中文)。若为专业模式，必须包含你自主规划的时间轴分段与镜头/光影/材质细节。",
+    "video_prompt": "符合CogVideoX标准的英文Prompt。专业模式下必须包含时间轴标记（如 0s-3s:），且字数不少于120英文词。",
     "voiceover": "中文旁白；若选择无旁白则返回空字符串\"\"。"
 }`;
 
@@ -669,17 +669,19 @@ ${extra ? `4. **用户特别修正指令(最高优先级)：** ${extra}` : ''}
             if (detailPreset !== 'pro') return false;
             const vp = String(result.video_prompt || '');
             const words = countEnglishWords(vp);
-            const hasTimeline = segments.every(seg => vp.includes(seg));
+            // 只要包含至少一个 "数字s - 数字s" 或 "数字s to 数字s" 的时间标记即可
+            const hasTimeline = /\d+s\s*[-–to]\s*\d+s/i.test(vp);
             return words < 140 || !hasTimeline;
         })();
 
         if (needRepair) {
             const repairSystem = `你是一位严格的AI视频Prompt修复工程师。你只负责把“中文脚本”忠实转换为“按时间轴分段的英文 video_prompt”。必须与脚本内容一一对应，不允许泛化。`;
             const repairUser = `
-请基于下面的中文脚本，输出一个新的 video_prompt（英文），必须按时间轴分段并显式包含：${segments.join(' / ')}。
+请基于下面的中文脚本，输出一个新的 video_prompt（英文），必须按时间轴分段（显式写出时间标记，如 0s-xx:）。
 
 硬性要求：
-1) 每段都要同步：主体外观细节、关键动作、环境细节、镜头运动、光影、材质/纹理、粒子/体积效果。
+1) 英文内容必须与中文脚本的时间轴和细节描述完全对应。
+2) 每段都要同步：主体外观细节、关键动作、环境细节、镜头运动、光影、材质/纹理、粒子/体积效果。
 2) 必须排除：字幕/水印/Logo/文字、畸形肢体、跳切抖动。
 3) 总英文词数不少于 160。
 4) 仅输出 JSON，结构如下：
@@ -898,6 +900,145 @@ function toggleOptimizePanel(index) {
         if (undoBtn) {
             undoBtn.style.display = globalScenes[index].lastSummary ? 'inline-block' : 'none';
         }
+    }
+}
+
+// 存储上次的创意内容以便撤销
+let lastTopicContent = null;
+
+// 切换创意优化面板显示
+function toggleTopicOptimizePanel() {
+    const panel = document.getElementById('topic-optimize-panel');
+    panel.classList.toggle('d-none');
+    
+    // 如果有历史记录，显示撤销按钮
+    const undoBtn = document.getElementById('undo-topic-btn');
+    if (undoBtn) {
+        undoBtn.style.display = lastTopicContent ? 'inline-block' : 'none';
+    }
+}
+
+// 撤销创意优化
+function undoOptimizeTopic() {
+    if (lastTopicContent !== null) {
+        const topicInput = document.getElementById('topic');
+        topicInput.value = lastTopicContent;
+        
+        // 闪烁提示
+        topicInput.classList.add('bg-warning', 'bg-opacity-10');
+        setTimeout(() => topicInput.classList.remove('bg-warning', 'bg-opacity-10'), 500);
+        
+        // 隐藏撤销按钮（单步撤销）
+        lastTopicContent = null;
+        document.getElementById('undo-topic-btn').style.display = 'none';
+    }
+}
+
+// 优化/扩写视频创意
+async function optimizeTopic() {
+    const apiKey = document.getElementById('apiKey').value.trim();
+    if (!apiKey) { alert('请先输入 DeepSeek API Key'); return; }
+
+    const topicInput = document.getElementById('topic');
+    const rawContent = topicInput.value; // 获取输入框内的完整文本
+    const instructionInput = document.getElementById('topic-optimize-input');
+    const instruction = instructionInput.value.trim();
+
+    // 1. 智能提取：分离“用户主题”
+    let currentTopic = rawContent;
+    
+    // 尝试匹配已生成的格式，提取 **视频主题** 后的内容
+    // 匹配规则：找 "**视频主题**" 或 "视频主题：" 开头，直到遇到下一个 "**" 或结束
+    const themeMatch = rawContent.match(/(?:\*\*视频主题\*\*|视频主题)[:：]?\s*([\s\S]*?)(\n\*\*|\n\n|$)/);
+    if (themeMatch && themeMatch[1]) {
+        currentTopic = themeMatch[1].trim();
+    } else {
+        // 旧逻辑：截取 AI 关键词之前的部分
+        const aiKeywords = [
+            '**画面风格**', '画面风格：', '镜头设计：', '人物要求：', '屋内设计：', '整体要求：',
+            '视觉风格：', '核心创意：', '主体与场景要求：'
+        ];
+        let splitIndex = -1;
+        for (const kw of aiKeywords) {
+            const idx = rawContent.indexOf(kw);
+            if (idx !== -1) {
+                if (splitIndex === -1 || idx < splitIndex) splitIndex = idx;
+            }
+        }
+        if (splitIndex !== -1) {
+            currentTopic = rawContent.substring(0, splitIndex).trim();
+        }
+    }
+
+    // 只要有输入内容或者有指令即可
+    if (!currentTopic && !instruction) {
+        alert('请先输入一些基础想法或优化指令');
+        return;
+    }
+
+    const btn = document.getElementById('do-topic-optimize-btn');
+    const undoBtn = document.getElementById('undo-topic-btn');
+    const originalIcon = btn.innerHTML;
+    
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 规划中...';
+
+    try {
+        const abortSignal = beginCancelableOp('优化视频创意');
+
+        // 备份当前完整内容以便撤销
+        lastTopicContent = rawContent;
+
+        const systemPrompt = `你是一位AI视频制作架构师。你的任务是将用户输入的“核心主题”重构为一份**完整、专业、结构化**的视频策划方案。
+这不仅是给用户看的，更是给后续AI生成环节（分镜、视频生成）使用的**标准执行单**。
+
+**请严格遵守以下输出格式（直接输出全部内容，覆盖原文本）：**
+**视频主题**：[在此处保留并优化用户的主题，保持核心立意不变]
+**画面风格**：[描述整体画风、色调、光影质感。例如：“偏写实风格，低饱和度暖光，电影胶片质感”]
+**镜头设计**：
+- [条目化列出运镜逻辑。例如：“采用第一人称视角（FPV）...”]
+- [例如：“镜头由远及近，平稳推拉...”]
+**主体与场景细节**：
+- [描述主要人物或核心主体特征]
+- [描述环境背景、关键道具、必须出现的细节（堆叠名词）]
+**整体要求**：
+- [描述视频节奏、情感基调]
+- [避坑指南（如避免变形、避免文字水印等）]
+**原则**：
+1. **全量输出**：输出结果必须包含“**视频主题**”这一项，且放在第一行。
+2. **指令清晰**：多用“采用...”、“呈现...”、“聚焦...”等动词。
+3. **细节丰富**：不要写空洞的形容词，要写画面里具体能看到什么。`;
+
+        const userPrompt = `
+核心主题：${currentTopic || '（用户未提供，请基于下方指令自由发挥）'}
+${instruction ? `额外指令/偏好：${instruction}` : ''}
+
+请输出完整的策划方案：`;
+
+        const optimizedText = await callDeepSeek(apiKey, systemPrompt, userPrompt, 1024, 30000, abortSignal);
+        
+        // 更新内容
+        const cleanText = optimizedText.replace(/^["']|["']$/g, '').trim(); // 去除可能的首尾引号
+        
+        // 覆盖回填：直接使用 AI 返回的完整内容（包含主题+细节），实现“修改”而非“追加”
+        topicInput.value = cleanText;
+
+        // 成功提示动画
+        topicInput.classList.add('bg-success', 'bg-opacity-10');
+        setTimeout(() => topicInput.classList.remove('bg-success', 'bg-opacity-10'), 500);
+
+        // 显示撤销按钮
+        if (undoBtn) undoBtn.style.display = 'inline-block';
+
+    } catch (e) {
+        console.error(e);
+        if (!String(e?.message).includes('已中断')) {
+            alert('优化失败：' + e.message);
+        }
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalIcon;
+        endCancelableOp();
     }
 }
 
@@ -1243,4 +1384,3 @@ function exportResult() {
     a.href = dataStr; a.download = "storyboard_export.json";
     document.body.appendChild(a); a.click(); a.remove();
 }
-
