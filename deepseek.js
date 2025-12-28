@@ -9,7 +9,7 @@ const API_CONFIG = {
     },
     thirdParty: {
         baseUrl: 'https://llmapi.paratera.com',
-        model: 'DeepSeek-V3.2', 
+        model: 'DeepSeek-V3.2-Exp',
         name: '第三方API',
         models: [
             { id: 'DeepSeek-V3.2', name: 'DeepSeek-V3.2 (默认)' },
@@ -20,10 +20,13 @@ const API_CONFIG = {
 };
 
 const ZHIPU_BASE_URL = "https://zhipu-proxy.1963087187.workers.dev";
+const VEO_BASE_URL = "https://api.cqtai.com/api/cqt/generator/veo";  // Veo生成端点（正确）
+const VEO_INFO_URL = "https://api.cqtai.com/api/cqt/info/veo";  // Veo查询端点
 
 // 全局状态
 let currentApiConfig = API_CONFIG.thirdParty;
 let globalConcept = null;   // 存储策划大纲
+let globalSeriesAnchor = null;   // 存储系列共同锚点（系列视频的统一特征）
 let globalScenes = [];      // 存储分镜列表
 let videoTasks = {};        // 视频任务状态
 
@@ -139,7 +142,7 @@ function initUI() {
     document.getElementById('testApiBtn').addEventListener('click', async () => {
         const apiKey = document.getElementById('apiKey').value.trim();
         if (!apiKey) { alert('请先输入 API Key'); return; }
-        
+
         try {
             await callDeepSeek(apiKey, "你是一个测试助手。", "请回复'OK'。", 50, 15000);
             // 成功的提示已在 callDeepSeek 内部处理 (变为绿色)
@@ -148,6 +151,27 @@ function initUI() {
             alert("API 测试失败: " + e.message);
         }
     });
+
+    // 5. 视频平台切换
+    const zhipuPlatform = document.getElementById('zhipuPlatform');
+    const veoPlatform = document.getElementById('veoPlatform');
+    const zhipuSettings = document.getElementById('zhipuSettings');
+    const veoSettings = document.getElementById('veoSettings');
+
+    const updateVideoPlatform = () => {
+        if (zhipuPlatform.checked) {
+            zhipuSettings.classList.remove('d-none');
+            veoSettings.classList.add('d-none');
+        } else {
+            zhipuSettings.classList.add('d-none');
+            veoSettings.classList.remove('d-none');
+        }
+    };
+
+    zhipuPlatform.addEventListener('change', updateVideoPlatform);
+    veoPlatform.addEventListener('change', updateVideoPlatform);
+    // 初始化时，默认选中Veo（根据HTML中的checked属性）
+    updateVideoPlatform();
 }
 
 // ==========================================
@@ -168,7 +192,7 @@ async function startStep1_Planning() {
     document.getElementById('progressSection').classList.remove('d-none');
     document.getElementById('generateBtn').disabled = true;
 
-    // UI：换主题重新开始时，必须清理上一轮的“完成态/禁用态”
+    // UI：换主题重新开始时，必须清理上一轮的"完成态/禁用态"
     resetSessionUIState();
 
     resetSteps();
@@ -179,10 +203,11 @@ async function startStep1_Planning() {
         // 初始化全局状态
         globalScenes = [];
         globalConcept = null;
+        globalSeriesAnchor = null;
         videoTasks = {};
         let currentSceneIndex = 0;
         
-        // 生成第一个分镜
+        // 只生成第一个分镜，后续分镜通过"生成下一个"按钮逐一生成
         await generateNextSceneData(apiKey, topic, sceneCount, sceneDuration, currentSceneIndex, abortSignal);
         
         // 渲染第一个分镜UI
@@ -208,7 +233,80 @@ async function startStep1_Planning() {
     }
 }
 
-// 生成下一个分镜（数据层函数：只负责向 globalScenes 追加一个新分镜，不做界面跳转/按钮状态修改）
+// 生成整体视频策划方案（全局大纲）- 已弃用，改为逐一生成模式
+// 保留此函数仅为参考，实际不再使用
+/*
+async function generateGlobalConcept(apiKey, topic, sceneCount, sceneDuration, abortSignal) {
+    // 生成整体策划方案的 System Prompt
+    const systemPrompt = `你是一位获得奥斯卡奖的电影导演和创意策划专家。你的任务是为主题【${topic}】制定**整体视频策划方案**。
+
+**你的使命：**
+- 从整体视角出发，构思如何通过 ${sceneCount} 个分镜（每个 ${sceneDuration} 秒）来表达主题【${topic}】
+- 制定整体的叙事节奏、情感曲线和视觉风格
+- 为后续的分镜生成提供全局指导
+
+**必须包含的内容（这是整体策划，不是单个镜头的描述）：**
+1. **核心立意**：主题【${topic}】的深层内涵和核心表达
+2. **整体叙事结构**：${sceneCount} 个分镜如何层层递进，讲述一个完整的故事
+3. **情感曲线**：从开始到结束，观众情绪如何变化（例如：平静→紧张→震撼→升华）
+4. **整体视觉风格**：贯穿整个视频的色彩、光影、镜头语言风格
+5. **关键视觉符号**：2-3个重复出现的视觉元素，用于统一整个视频的主题表达
+
+**输出格式要求：**
+请以自然语言的段落形式输出策划方案，不要使用列表或JSON。内容要整体性、连贯性，让读者能够清晰看到整个视频的完整蓝图。`;
+
+    // 调用 API 获取整体策划方案
+    const userPrompt = `请为主题【${topic}】制定一个 ${sceneCount} 个分镜的整体视频策划方案。`;
+
+    const result = await callDeepSeek(apiKey, systemPrompt, userPrompt, 2048, 60000, abortSignal);
+    
+    // 存储整体策划方案
+    globalConcept = result.trim();
+    
+    if (!globalConcept) {
+        throw new Error('整体策划方案生成失败');
+    }
+
+    // 生成系列共同锚点（确保所有分镜都记住这是同一个系列）
+    await generateSeriesAnchor(apiKey, topic, sceneCount, abortSignal);
+}
+*/
+
+// 生成系列共同锚点（系列视频的统一特征）- 已弃用，改为逐一生成模式
+// 保留此函数仅为参考，实际不再使用
+/*
+async function generateSeriesAnchor(apiKey, topic, sceneCount, abortSignal) {
+    const anchorSystemPrompt = `你是一位系列视频策划专家。你的任务是为主题【${topic}】制定**系列共同锚点**。
+
+**什么是系列共同锚点？**
+系列共同锚点是贯穿所有分镜的核心特征，确保：
+1. 所有分镜都属于同一个系列（例如："十二星座"系列，每个分镜都必须体现"星座"这个核心）
+2. 每个分镜都有自己的独特性，但都服务于整体主题
+3. 观众一眼就能认出这是同一个系列的视频
+
+**必须包含的内容：**
+1. **核心系列特征**：什么是贯穿所有分镜的核心特征？（例如："每个分镜必须明确体现一个星座的特性"）
+2. **系列统一元素**：哪些元素必须在每个分镜中都出现？（例如："星座符号"、"神兽形象"等）
+3. **分镜差异化原则**：不同分镜如何区分？（例如："每个分镜对应一个不同的星座"）
+4. **记忆点设计**：如何让观众记住这是一个系列？（例如："每个分镜结尾都展示对应的星座符号"）
+
+**输出格式要求：**
+请以简洁的段落形式输出，直接回答以上4个问题，不要有多余的废话。`;
+
+    const anchorUserPrompt = `为主题【${topic}】制定系列共同锚点，确保 ${sceneCount} 个分镜都属于同一个系列。`;
+
+    const anchorResult = await callDeepSeek(apiKey, anchorSystemPrompt, anchorUserPrompt, 1024, 60000, abortSignal);
+    
+    // 存储系列共同锚点
+    globalSeriesAnchor = anchorResult.trim();
+    
+    if (!globalSeriesAnchor) {
+        throw new Error('系列共同锚点生成失败');
+    }
+}
+*/
+
+// 生成下一个分镜（数据层函数 - 只负责向 globalScenes 追加一个新分镜，不做界面跳转/按钮状态修改）
 async function generateNextSceneData(apiKey, topic, totalScenes, duration, index, abortSignal) {
     if (index >= totalScenes) return null;
 
@@ -220,18 +318,7 @@ async function generateNextSceneData(apiKey, topic, totalScenes, duration, index
 
     const systemPrompt = `你是一位精通AI视频生成的创意总监和分镜师，擅长从复杂主题中提炼核心创意。你的任务是根据主题构思具有高视觉冲击力和情感深度的视频大纲。
 
-**关键注意：**
-
-用户的输入 [主题] 可能是一份结构化的"策划方案"或"制作规范"。
-
-**请将这些规范视为"核心参考指南"**，在保持原意图的基础上进行专业的视听化转译：
-
-1. **风格对齐**：参考输入中定义的画风与光影质感，确保整体调性统一。
-2. **运镜借鉴**：灵活运用输入中建议的运镜方式，根据具体画面张力进行优化。
-3. **元素融合**：自然地将要求的关键细节融入场景，而非生硬堆砌。
-
 **核心目标：**
-
 将抽象的主题转化为具体的、具有情感共鸣的视觉画面，同时保持创意的深度和独特性。
 
 **深度分析要求：**
@@ -276,10 +363,7 @@ ${existingSummaries ? `已生成的分镜内容：\n- ${existingSummaries}` : '�
 2.  **画面简述标准（关键，必须严格遵守）：**
     * **多场景时间线描述（强制要求）**：当分镜涉及多个场景切换时，必须在summary中明确描述时间线和场景切换的过程。不要只描述第一个场景，而是要完整描述从开始到结束的所有场景变化，包括时间点和过渡方式。例如："0-2秒：室内书房，老人坐在桌前翻看旧照片；2-4秒：镜头推近照片，画面渐变为回忆中的年轻时代；4-7秒：回到现实，老人眼含泪光特写"。
     * **平衡抽象与具体**：在描述抽象概念时，必须同时提供具体的视觉细节作为支撑。例如：描述"孤独"时，要同时描述"空荡房间里的单人沙发、窗外的雨滴、墙上的旧照片"等具体元素。
-    * **背景细节必须爆炸丰富（硬指标）**：在 [环境/背景细节] 中必须给出 **至少 10 个**具体可见元素（用"、"分隔），并且至少包含：
-      - **前景元素 ≥ 4**（例如：水珠挂在金属边缘、漂浮的细尘、镜头边缘的枝叶剪影、花瓣、雨滴、反光表面、书籍封面、装饰品）
-      - **中景元素 ≥ 4**（例如：建筑、人物/生物的局部、道具、符号、装饰画、植物、家具、灯光装置）
-      - **远景元素 ≥ 2**（例如：天际线、山脉、巨构、极光、云层结构、城市天际线、天空变化）
+    * **背景细节必须爆炸丰富（硬指标）**：在 [环境/背景细节] 中必须构建多层次的空间感，融合前景、中景和远景元素，形成深度与层次。前景应包含细微的触手可及之物，如水珠悬挂、灰尘飘舞、叶影轻摇、雨滴滑落或反光闪烁的表面；中景需要表现场景的核心内容和视觉焦点，可以是建筑结构、人物形态、关键道具、装饰元素或重要符号；远景则应渲染环境的广阔感和氛围，如天际线轮廓、山脉起伏、极光流转或云层变幻。所有这些元素应当自然融合，共同构建出一个富有深度和细节的视觉世界。
     * **场景切换与过渡设计（强制要求）**：每个分镜必须明确标注其所属的场景类型和场景切换信息：
     - 场景类型：必须标注是"室内场景"、"室外场景"、"过渡场景"还是"概念场景"
     - 场景切换时间点：必须标注场景开始和结束的时间范围（如"0-3秒：室内场景"、"3-6秒：通过窗户看到室外变化"）
@@ -310,7 +394,7 @@ ${existingSummaries ? `已生成的分镜内容：\n- ${existingSummaries}` : '�
     "outline": [
         {
             "id": ${index + 1},
-            "summary": "必须使用结构化格式输出： [主体]... + [环境/背景细节(≥8个元素，含前/中/远景)]... + [关键动作/动态(≥2)]... + [运镜/镜头语言(含景深/焦点)]... + [光影/材质(≥4)]... + [主题锚点符号(≥2)]... + [情感暗示]... + [场景时间线(当涉及多个场景时必须明确时间线与场景切换)]...",
+            "summary": "必须使用结构化格式输出： [主体]... + [环境/背景细节(多层次空间感，融合前景细微元素、中景核心内容和远景环境氛围)]... + [关键动作/动态(≥2)]... + [运镜/镜头语言(含景深/焦点)]... + [光影/材质(≥4)]... + [主题锚点符号(≥2)]... + [情感暗示]... + [场景时间线(当涉及多个场景时必须明确时间线与场景切换)]...",
             "style_guide": "该镜头的具体视觉风格（必须含：核心色调、对比关系、光影方式、镜头节奏；例如：冷色为主+金色点缀、体积光、微距慢推、胶片颗粒）。",
             "duration": ${duration},
             "concept_link": "该镜头如何体现主题的核心概念/锚点符号，以及与已生成分镜的继承与递进（必须写清楚继承了什么、新增了什么）",
@@ -323,18 +407,18 @@ ${existingSummaries ? `已生成的分镜内容：\n- ${existingSummaries}` : '�
         }
 
     ]
-
 }`;
 
-    const resultRaw = await callDeepSeek(apiKey, systemPrompt, "开始策划", 4096, 600000, abortSignal);
+    // User Prompt：明确要求生成整体策划和分镜数据
+    const userPrompt = `开始策划：请为主题【${topic}】制定整体策划方案，并生成第 ${index + 1} 个分镜的详细描述。
+
+请按照 JSON 结构模版输出，必须包含 analysis（分析）、creative_strategy（创意策略）和 outline（分镜大纲）。`;
+
+    // 调用 API
+    const resultRaw = await callDeepSeek(apiKey, systemPrompt, userPrompt, 4096, 60000, abortSignal);
     const result = parseJsonResult(resultRaw);
 
-    // 只在首次生成时写入全局策划（避免后续生成覆盖用户已编辑的策划内容）
-    if (!globalConcept) {
-        globalConcept = [result.analysis, result.creative_strategy].filter(Boolean).join('\n\n');
-    }
-
-    // 兼容 outline 可能返回 1 个或多个条目：尽量选中当前 index 对应的那一个
+    // 结果处理
     const outlineArr = Array.isArray(result.outline) ? result.outline : [];
     const picked =
         outlineArr.find(s => String(s.id) === String(index + 1)) ||
@@ -342,23 +426,26 @@ ${existingSummaries ? `已生成的分镜内容：\n- ${existingSummaries}` : '�
         null;
 
     if (!picked) {
-        throw new Error('模型返回内容缺少 outline 分镜数据');
+        throw new Error('模型生成数据解析失败，请重试');
+    }
+
+    // 只在首次生成时写入全局策划（避免后续生成覆盖用户已编辑的策划内容）
+    if (index === 0 && !globalConcept) {
+        globalConcept = [result.analysis, result.creative_strategy].filter(Boolean).join('\n\n');
     }
 
     const newScene = {
         ...picked,
-        video_prompt: null, // 待生成
-        voiceover: null,    // 待生成
-        description: null,  // 待生成
+        video_prompt: null,
+        voiceover: null,
+        description: null,
         detail_generated: false,
-        regen_hint: ''      // 重新生成提示的自定义要求
+        regen_hint: ''
     };
 
-    // 追加而不是覆盖：保证“生成下一个分镜”按顺序累积
     globalScenes.push(newScene);
     return newScene;
 }
-
 // ==========================================
 // Step 2: 分镜细化 (Detailing)
 // ==========================================
@@ -433,6 +520,27 @@ function renderNextSceneUI() {
                     <i class="bi bi-play-fill"></i> 生成视频
                 </button>
             </div>
+
+            <!-- 图片上传区（用于图生视频模式） -->
+            <div class="mt-2 p-2 bg-light rounded">
+                <label class="form-label small mb-1">参考图片（可选，图生视频模式使用）</label>
+                <div class="mb-2">
+                    <input type="file" class="form-control form-control-sm" id="veoImageUpload-${index}" accept="image/*" multiple onchange="handleImageUpload(${index})">
+                    <small class="text-muted">注意：仅用于预览，Veo API需要公开的图片URL</small>
+                </div>
+                <!-- 图片预览区 -->
+                <div id="image-preview-${index}" class="d-flex gap-2 flex-wrap mb-2"></div>
+                <!-- URL输入区（必须使用公开URL） -->
+                <div class="alert alert-warning mb-2" role="alert" style="padding: 0.5rem 0.75rem;">
+                    <i class="bi bi-exclamation-triangle"></i> 
+                    <strong>重要：</strong>Veo API 需要公开的图片URL，不支持Base64格式。<br>
+                    <small>如果您上传了本地图片，请先将其上传到图床（如 <a href="https://imgur.com" target="_blank">Imgur</a>、<a href="https://imgbox.com" target="_blank">ImgBox</a>），然后将获得的URL粘贴到下方。</small>
+                </div>
+                <!-- URL输入区 -->
+                <textarea class="form-control form-control-sm" id="veoImageUrls-${index}" rows="2" placeholder="输入公开的图片URL，每行一个&#10;例如：&#10;https://i.imgur.com/abc123.jpg&#10;https://i.imgur.com/def456.jpg"></textarea>
+                <small class="text-muted">图生视频模式：使用第一张图片；首尾帧模式：使用前两张图片</small>
+            </div>
+
             <div class="mt-3 d-none" id="video-content-${index}"></div>
         </div>
     `;
@@ -592,141 +700,190 @@ async function generateNextScene() {
 }
 
 /**
- * 生成单个分镜的详细脚本
+ * 生成单个分镜的详细脚本 (基于“高保真渲染框架”优化版)
  */
 async function generateSingleSceneDetail(index, externalAbortSignal) {
     const apiKey = document.getElementById('apiKey').value.trim();
     const scene = globalScenes[index];
     const detailArea = document.getElementById(`scene-detail-area-${index}`);
     const topic = document.getElementById('topic').value.trim();
+    // 确保获取到整体基调字符串
+    const globalConceptStr = (typeof globalConcept === 'string' ? globalConcept : document.getElementById('globalConcept')?.value || '').trim();
     const detailPreset = (document.getElementById('detailPreset')?.value || 'standard').trim();
     const narrationMode = (document.getElementById('narrationMode')?.value || 'on').trim();
     const videoRatio = (document.getElementById('videoRatio')?.value || '9:16').trim();
 
-    // 动态分段策略：不再写死时间点，而是告诉 AI 总时长，让它自己规划
-    const duration = Number(scene.duration || 5);
-    const segmentHint = (() => {
-        if (duration >= 15) return "建议分为 3-4 个时间节拍";
-        if (duration >= 8) return "建议分为 2-3 个时间节拍";
-        return "建议分为 2 个时间节拍";
+    // 1. 动态时间轴规划 (保持不变，这是非常好的逻辑)
+    const segments = (() => {
+        const d = Number(scene.duration || 5);
+        if (d >= 20) return ['0s-6s', '6s-12s', '12s-20s'];
+        if (d >= 15) return ['0s-5s', '5s-10s', '10s-15s'];
+        if (d >= 12) return ['0s-4s', '4s-8s', '8s-12s'];
+        if (d >= 10) return ['0s-3s', '3s-7s', '7s-10s'];
+        if (d >= 8)  return ['0s-2s', '2s-5s', '5s-8s'];
+        if (d >= 6)  return ['0s-2s', '2s-4s', '4s-6s'];
+        return ['0s-2s', '2s-4s', '4s-5s']; // 5秒默认三段式
     })();
 
     // UI Loading
-    detailArea.innerHTML = `<div class="text-center text-muted small"><span class="spinner-border spinner-border-sm"></span> 正在编写脚本...</div>`;
+    detailArea.innerHTML = `<div class="text-center text-muted small"><span class="spinner-border spinner-border-sm"></span> 正在进行微观纹理渲染...</div>`;
 
     try {
-        // 如果是批量细化传入 externalAbortSignal，则不要重复创建/覆盖全局可中断操作
-        const abortSignal = externalAbortSignal || beginCancelableOp(`细化第 ${index + 1} 个分镜`);
-        // 优化点：明确角色为“Prompt工程师”，并强调针对 CogVideoX 的优化逻辑
-        const systemPrompt = `你是一位精通CogVideoX模型的AI视频Prompt工程师，同时也是电影摄影指导与分镜脚本师。你的任务是将“简单分镜描述”扩写为可直接用于生成高质量视频的脚本与英文Prompt。
+        // 使用独立的可中断控制器，避免与其他操作冲突
+        let abortSignal = externalAbortSignal;
+        if (!abortSignal) {
+            const controller = beginCancelableOp(`生成分镜${index + 1}详细脚本`);
+            abortSignal = controller.signal || controller;
+        }
+        
+        // 1. 动态时间轴规划 (保持不变，这是非常好的逻辑)
+        const segments = (() => {
+            const d = Number(scene.duration || 5);
+            if (d >= 20) return ['0s-6s', '6s-12s', '12s-20s'];
+            if (d >= 15) return ['0s-5s', '5s-10s', '10s-15s'];
+            if (d >= 12) return ['0s-4s', '4s-8s', '8s-12s'];
+            if (d >= 10) return ['0s-3s', '3s-7s', '7s-10s'];
+            if (d >= 8)  return ['0s-2s', '2s-5s', '5s-8s'];
+            if (d >= 6)  return ['0s-2s', '2s-4s', '4s-6s'];
+            return ['0s-2s', '2s-4s', '4s-5s']; // 5秒默认三段式
+        })();
 
-**核心原则：**
-1. **CogVideoX 偏好：** 模型更喜欢流畅的自然语言描述，而非单纯的关键词堆砌。
-2. **动态优先：** 视频Prompt必须包含明确的“动作”或“运镜”描述，否则生成的视频会像PPT。
-3. **视觉密度（重中之重）：** 视觉描述必须达到“显微镜级”精度。必须明确描述：**材质纹理**（如：粗糙的混凝土、丝绸般的水面）、**光影互动**（如：丁达尔效应、边缘轮廓光）、**环境粒子**（如：漂浮的尘埃、飞溅的火星）。
-4. **中英完全对齐（铁律）：** 英文 video_prompt 必须是中文 description 的**像素级翻译**。中文里提到的每一个视觉细节（材质、动作、光影），英文里**必须**有对应的描述，**严禁漏译或简化**。
-5. **可执行性：** 杜绝抽象形容词（如“氛围感”、“震撼”），必须转化为物理描述（如“烟雾缭绕”、“大广角仰拍”）。
+        // ============================================================
+        // 核心优化：System Prompt - 定义“高保真渲染专家”人格
+        // ============================================================
+        const systemPrompt = `你是一位世界级的数字艺术家和电影摄影指导(DOP)，精通CogVideoX与Sora模型的提示词工程。
+
+**你的核心工作流：**
+你不仅仅是在写描述，你是在脑海中运行一个**"物理渲染引擎"**。你需要将用户提供的简略分镜，转化为包含光线追踪、材质物理属性、流体动力学和摄影机参数的**"可执行渲染脚本"**。
+
+**高保真渲染标准 (High-Fidelity Standard)：**
+1. **叙事流体化 (Narrative Fluidity)**：将画面描述为连续的时间流（Time-Flow），而非静态的快照。关注物体是如何进入画面、如何移动、以及如何离开焦点的。
+2. **空间层次感 (Spatial Hierarchy)**：强制使用全景(wide shot)或远景(establishing shot)，展示完整的场景和空间关系。采用第三方视角，让观众以观察者的身份观看，增强沉浸感和真实感。严禁使用特写镜头，保持适度的观察距离。
+3. **氛围营造 (Atmosphere Building)**：强调环境光效、色彩情绪和空间感，让观众沉浸在场景的氛围中，而非仅仅关注物体表面。
 
 **输入上下文：**
 主题：${topic}
-整体基调：${globalConcept}`;
+整体艺术基调：${globalConceptStr}`;
 
         // 读取用户的额外要求
         const extra = (globalScenes[index].regen_hint || '').trim();
 
+        // ============================================================
+        // 核心优化：Pro 模式 - 结构化引导模板 (Format Guide)
+        // ============================================================
+        // 这里不使用“禁止”，而是给出“最佳实践模板”
         const proRules = detailPreset === 'pro' ? `
-【专业细节模式（必须遵守）】
-1) **时间轴自主规划**：本镜头总时长为 ${duration}秒。请根据画面内容逻辑，自主规划时间轴（${segmentHint}），例如 "0s-3s", "3s-${duration}s" 等。
-2) 输出必须包含“时间轴节拍”，每个节拍段落都要包含：
-   - Visual（**视觉描述必须极度具体**：明确指出材质质感（如粗糙/光滑/湿润）、光影方向与色彩、粒子特效（烟雾/火星/灰尘）以及物体的物理状态。**拒绝**“好看的背景”这种空话，要写“墙纸剥落露出红砖的背景”。）
-   - Camera（机位/镜头运动/景深变化，如“85mm镜头聚焦前景，背景虚化”）
-   - Lighting（主光源方向、色温倾向、阴影与高光特征）
-   - Micro details（至少3个：如水珠挂壁、尘埃漂浮、皮肤/鳞片微反光、蒸汽、纤维、划痕等）
-   - Audio（环境音/音效，不要写“背景音乐很好听”这种空话）
- 3) 画幅要求：${videoRatio}（竖屏/横屏请严格遵守）；强调“微距/近景质感”，给出镜头信息（如 85mm macro、f/2.8、浅景深）。
- 4) **中英对齐**：英文 video_prompt 必须显式包含你规划的时间轴标记（如 "0s-3s:"），且**完美包含**上述 Visual/Camera/Lighting/Micro details 的所有内容。不要因为是英文就偷工减料。
-5) 英文 video_prompt 必须更完整（不少于140英文词），并包含：主体外观细节、关键动作、环境细节、镜头运动、光影、材质、粒子/体积效果、转场/结尾状态、质量词。
-6) 明确排除项：不要出现字幕/水印/Logo/文字；不要出现额外肢体或畸形；不要出现跳切抖动；避免“过度梦幻导致主体糊成一团”。
-7) description 用中文写得像给导演/摄影/特效看的“可执行脚本”，不是给营销写的文案。
+【专业级提示词构建指南 (Pro Mode Blueprint)】
+
+请按照以下 **"空间层次结构"** 来构建每个时间段（${segments.join(' / ')}）的描述：
+
+**Layer 1: 空间构图 (Spatial Composition)**
+* 强制使用全景(wide shot)或远景(establishing shot)，展示完整的场景和空间关系。
+* 采用第三方视角，让观众以观察者的身份观看场景，避免主观第一人称视角。
+* 优先考虑环绕式运镜：orbits, pans, crane movements，严禁推近(push in)和特写镜头。
+* *Guidance:* 使用 "sweeping pan", "slow orbit", "crane down", "aerial view" 等动态运镜词汇，展示整体空间和场景规模。
+
+**Layer 2: 环境氛围 (Environmental Atmosphere)**
+* 定义整体环境：光影分布、色彩情绪、天气条件。
+* 强调空间感：深度、透视、层次，让观众感受到场景的规模。
+* *Guidance:* 描述环境光效（如 "volumetric fog", "ambient light", "atmospheric haze"）和整体色调。
+
+**Layer 3: 细节平衡 (Detail Balance)**
+* **适度细节**：包含必要细节，但保持适度的观察距离，不过度聚焦微观细节。
+* **重点在于氛围**：细节应服务于整体氛围，而非独立展示。
+* **材质与互动**：描述材质特性及其在环境中的反应，如光线反射、风吹效果。
+* *Guidance:* 确保画面保持全景视角，所有细节都在整体场景中呈现，避免特写和局部放大。
+
+**Technical Specification (技术参数)**
+* 在Prompt末尾统一添加渲染参数：画幅 ${videoRatio}, cinematic lens, dynamic movement, atmospheric lighting, 8k, photorealistic.
 ` : '';
 
         const narrationRule = narrationMode === 'off'
-            ? '旁白要求：voiceover 返回空字符串 ""，只在 description 的 Audio 中写环境音/音效。'
-            : `旁白要求：voiceover 为中文，尽量口语化但有画面感；按你规划的时间轴分段写，每段1-2句，避免太长。`;
+            ? 'Voiceover Strategy: Return an empty string "", but ensure ambient sound design is described in the prompt.'
+            : `Voiceover Strategy: Generate Chinese voiceover scripts that are conversational, emotive, and strictly synchronized with the visual pacing.`;
 
         const userPrompt = `
-**当前镜头参数：**
-- 画面简述：${scene.summary}
-- 风格指导：${scene.style_guide}
-- 预设时长：${scene.duration}s
+**渲染任务：**
+请基于以下分镜设计，生成高精度的英文Video Prompt和中文执行脚本。
 
-**生成要求：**
+**分镜参数：**
+- 原始构思：${scene.summary}
+- 视觉风格：${scene.style_guide}
+- 时长：${scene.duration}s
+
+${narrationRule}
 
 ${proRules}
 
-1. **Video Prompt 构建法则 (英文)：**
-   请用自然语言写成一段（标准模式）或按时间轴分段（专业模式必须按自主规划的时间轴分段），确保画面丰富且稳定，必须包含：
-   * **主体与外观细节**（材质、纹理、微瑕疵、反光）
-   * **动作与动态**（关键动作 + 次要微动作 + 粒子/流体/体积效果）
-   * **环境与背景**（空间深度、前中后景细节）
-   * **镜头与光影**（机位、镜头运动、景深、主光/辅光/轮廓光）
-   * **结尾状态/转场**（画面如何结束，为下一镜头留钩子）
-   * **质量词**：结尾加上 "8k, cinematic, hyper-realistic, macro cinematography, exquisite textures, magical lighting, highly detailed, smooth motion, masterpiece".
+${extra ? `**用户特别修正指令 (User Overrides):** ${extra}` : ''}
 
-2. **视觉展开：**
-   * 严格结合"${scene.style_guide}"。例如若是"赛博朋克"，Prompt中需包含 "neon lights, rainy street, futuristic reflection"。
+**输出格式要求 (JSON Structure)：**
 
-3. **旁白编写 (Voiceover)：**
-   * 语调要符合"${globalConcept}"。
-   * **字数控制：** ${scene.duration}秒的视频，旁白字数控制在 ${Math.ceil(scene.duration * 4)} 字以内，不要太长。
-   * ${narrationRule}
-
-${extra ? `4. **用户特别修正指令(最高优先级)：** ${extra}` : ''}
-
-請输出JSON：
 {
-    "description": "详细的画面脚本(中文)。若为专业模式，必须包含你自主规划的时间轴分段与镜头/光影/材质细节。",
-    "video_prompt": "符合CogVideoX标准的英文Prompt。专业模式下必须包含时间轴标记（如 0s-3s:），且字数不少于120英文词。",
-    "voiceover": "中文旁白；若选择无旁白则返回空字符串\"\"。"
+    "description": "中文执行脚本。请用优美的'导演语言'编写，侧重于光影氛围、镜头调度和声音设计的描述，供后期团队参考。",
+    
+    "video_prompt": "符合CogVideoX/Sora标准的英文提示词。要求：\n1. **Structure (结构)**: 严格按照时间轴 ${segments.join(' / ')} 进行分段描述。\n2. **Content (内容)**: 必须包含 'Layer 1/2/3' 的所有细节（动态、光影、微观纹理）。\n3. **Style (文风)**: 使用 'Narrative Prose' (散文体)，流畅连接各个视觉元素，避免机械列表。\n4. **Vocabulary (词汇)**: 积极使用推荐词汇 (e.g., iridescent, subsurface scattering, chromatic aberration, particulate matter)。\n5. **Fidelity (保真度)**: 能够被视频模型精准理解，纯英文，无Markdown标记，长度 > 160 words。",
+    
+    "voiceover": "中文旁白内容。"
 }`;
 
         const maxTokens = detailPreset === 'pro' ? 4096 : 2048;
         const timeoutMs = detailPreset === 'pro' ? 300000 : 120000;
+
+        // 调用 DeepSeek
         const resultRaw = await callDeepSeek(apiKey, systemPrompt, userPrompt, maxTokens, timeoutMs * 2, abortSignal);
         const result = parseJsonResult(resultRaw);
 
-        // 专业模式下做一次“质量门槛”：如果英文Prompt仍然太短/没按时间轴输出，则自动修复一次
-        const needRepair = (() => {
+        // ============================================================
+        // 核心优化：智能增强逻辑 (Enhancement Logic)
+        // ============================================================
+        // 这里的逻辑不是"修复错误"，而是"增强细节"。
+        // 如果生成的 Prompt 不够丰富，我们请求 AI 进行"上色 (Upscaling)"
+        const needEnhancement = (() => {
             if (detailPreset !== 'pro') return false;
             const vp = String(result.video_prompt || '');
             const words = countEnglishWords(vp);
-            // 只要包含至少一个 "数字s - 数字s" 或 "数字s to 数字s" 的时间标记即可
+
+            // 检查标准：是否过短？是否缺少时间轴？是否缺少空间感？
             const hasTimeline = /\d+s\s*[-–to]\s*\d+s/i.test(vp);
-            return words < 140 || !hasTimeline;
+            const qualityKeywords = /texture|refraction|shadow|volumetric|dust|particle|lens/i;
+            const hasQuality = qualityKeywords.test(vp);
+
+            // 检查是否有任何特写镜头（严格禁止）
+            const anyCloseUp = /close[- ]up|macro lens|microscopic|zoom in|push in|detail shot|extreme shot/i.test(vp);
+            // 检查是否有全景或远景描述（必须包含）
+            const hasWideOrEstablishing = /wide shot|establishing shot|panoramic|aerial view|long shot|full scene/i.test(vp);
+
+            return words < 160 || !hasTimeline || !hasQuality || anyCloseUp || !hasWideOrEstablishing;
         })();
 
-        if (needRepair) {
-            const repairSystem = `你是一位严格的AI视频Prompt修复工程师。你只负责把“中文脚本”忠实转换为“按时间轴分段的英文 video_prompt”。必须与脚本内容一一对应，不允许泛化。`;
-            const repairUser = `
-请基于下面的中文脚本，输出一个新的 video_prompt（英文），必须按时间轴分段（显式写出时间标记，如 0s-xx:）。
+        if (needEnhancement) {
+            const enhanceSystem = `你是一位Prompt润色专家。你的任务是提升这段Prompt的画面精度和文学性。
+            
+**优化目标：**
+1. **Spatial Balance (空间平衡)**：平衡全景、中景和特写，优先展示整体环境和氛围。
+2. **Atmospheric Focus (氛围重点)**：强调环境光效、色彩情绪和空间感，让观众沉浸在场景中。
+3. **Movement Fluidity (运动流畅性)**：使用环绕、平移等运镜，而非过度推近。`;
 
-硬性要求：
-1) 英文内容必须与中文脚本的时间轴和细节描述完全对应。
-2) 每段都要同步：主体外观细节、关键动作、环境细节、镜头运动、光影、材质/纹理、粒子/体积效果。
-2) 必须排除：字幕/水印/Logo/文字、畸形肢体、跳切抖动。
-3) 总英文词数不少于 160。
-4) 仅输出 JSON，结构如下：
-{
-  "video_prompt": "..."
-}
+            const enhanceUser = `
+请将以下 Video Prompt 扩写并润色，使其达到电影级渲染标准。
 
-中文脚本如下：
-${result.description || scene.summary || ''}`.trim();
+**原 Prompt：**
+${result.video_prompt}
 
-            const repairedRaw = await callDeepSeek(apiKey, repairSystem, repairUser, 2048, 60000, abortSignal);
-            const repaired = parseJsonResult(repairedRaw);
-            if (repaired && repaired.video_prompt) {
-                result.video_prompt = repaired.video_prompt;
+**扩写要求：**
+1. 保持原有的时间轴结构。
+2. 增强空间感和氛围：强制使用全景(wide shot)或远景(establishing shot)，严禁使用特写镜头。
+3. 采用第三方视角，让观众以观察者的身份观看场景，保持适度的观察距离。
+4. 加入环境光效和整体色调描述，增强氛围感。
+5. 确保运镜流畅，使用环绕、平移、鸟瞰(aerial view)等运镜方式，严禁推近(push in)和特写。
+6. 仅输出 JSON: { "video_prompt": "..." }
+`.trim();
+
+            const enhancedRaw = await callDeepSeek(apiKey, enhanceSystem, enhanceUser, 2048, 60000, abortSignal);
+            const enhanced = parseJsonResult(enhancedRaw);
+            if (enhanced && enhanced.video_prompt) {
+                result.video_prompt = enhanced.video_prompt;
             }
         }
 
@@ -751,7 +908,6 @@ ${result.description || scene.summary || ''}`.trim();
         if (!externalAbortSignal) endCancelableOp();
     }
 }
-
 function countEnglishWords(text) {
     return String(text)
         .replace(/[^A-Za-z0-9'\-]+/g, ' ')
@@ -779,7 +935,7 @@ function renderSceneDetail(index) {
             </div>
             <div class="col-md-12">
                 <div class="prompt-box">
-                    <span class="badge bg-dark mb-1">PROMPT</span> 
+                    <span class="badge bg-dark mb-1">PROMPT</span>
                     <div contenteditable="true" class="editable-prompt" onblur="updateScenePrompt(${index}, this.innerText)">${formatTextToHtml(scene.video_prompt || '')}</div>
                     <button class="btn btn-sm btn-light border copy-btn" onclick="copyToClipboard(globalScenes[${index}].video_prompt)">
                         <i class="bi bi-clipboard"></i>
@@ -795,9 +951,35 @@ function renderSceneDetail(index) {
             </div>
         </div>
     `;
-    
-    // 显示视频生成区域
+
+    // 显示视频生成区域并添加图片上传框
     videoArea.classList.remove('d-none');
+    // 检查是否已经有图片上传框，如果没有则添加
+    if (!document.getElementById(`veoImageUpload-${index}`)) {
+        const imageInputArea = document.createElement('div');
+        imageInputArea.className = 'mt-2 p-2 bg-light rounded';
+        imageInputArea.innerHTML = `
+            <label class="form-label small mb-1">参考图片（可选，图生视频模式使用）</label>
+            <div class="mb-2">
+                <input type="file" class="form-control form-control-sm" id="veoImageUpload-${index}" accept="image/*" multiple onchange="handleImageUpload(${index})">
+                <small class="text-muted">注意：仅用于预览，Veo API需要公开的图片URL</small>
+            </div>
+            <!-- 图片预览区 -->
+            <div id="image-preview-${index}" class="d-flex gap-2 flex-wrap mb-2"></div>
+            <!-- URL输入区（必须使用公开URL） -->
+            <div class="alert alert-warning mb-2" role="alert" style="padding: 0.5rem 0.75rem;">
+                <i class="bi bi-exclamation-triangle"></i> 
+                <strong>重要：</strong>Veo API 需要公开的图片URL，不支持Base64格式。<br>
+                <small>如果您上传了本地图片，请先将其上传到图床（如 <a href="https://imgur.com" target="_blank">Imgur</a>、<a href="https://imgbb.com" target="_blank">ImgBB</a>），然后将获得的URL粘贴到下方。</small>
+            </div>
+            <!-- URL输入区 -->
+            <textarea class="form-control form-control-sm" id="veoImageUrls-${index}" rows="2" placeholder="输入公开的图片URL，每行一个&#10;例如：&#10;https://i.imgur.com/abc123.jpg&#10;https://i.imgur.com/def456.jpg"></textarea>
+            <small class="text-muted">图生视频模式：使用第一张图片；首尾帧模式：使用前两张图片</small>
+        `;
+        // 插入到视频内容区域之前
+        const videoContent = document.getElementById(`video-content-${index}`);
+        videoArea.insertBefore(imageInputArea, videoContent);
+    }
 }
 
 /**
@@ -845,6 +1027,19 @@ function checkAllDetailsGenerated() {
 // ==========================================
 
 async function generateSingleVideo(index) {
+    const zhipuPlatform = document.getElementById('zhipuPlatform');
+    const veoPlatform = document.getElementById('veoPlatform');
+
+    // 判断使用哪个平台
+    if (zhipuPlatform.checked) {
+        return await generateZhipuVideo(index);
+    } else if (veoPlatform.checked) {
+        return await generateVeoVideo(index);
+    }
+}
+
+// 智谱AI视频生成
+async function generateZhipuVideo(index) {
     const zhipuKey = document.getElementById('zhipuApiKey').value.trim();
     if (!zhipuKey) { alert('请输入智谱 AI API Key'); return; }
 
@@ -866,17 +1061,93 @@ async function generateSingleVideo(index) {
     try {
         const token = generateJwtToken(zhipuKey);
         const taskId = await createVideoTask(token, scene.video_prompt);
-        
+
         // 更新状态
         videoTasks[index] = { taskId, status: 'PROCESSING' };
         statusBadge.innerText = '生成中';
         contentDiv.innerHTML = `<div class="progress mb-2" style="height: 5px;"><div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" style="width: 40%"></div></div><div class="text-muted small">AI渲染中 (2-5分钟)...</div>`;
-        
-        // 返回一个“完成Promise”，方便批量模式做真正的并发控制
+
+        // 返回一个"完成Promise"，方便批量模式做真正的并发控制
         return pollVideoResult(token, taskId, index);
 
     } catch (e) {
         console.error(e);
+        const statusBadge = document.getElementById(`video-status-${index}`);
+        const contentDiv = document.getElementById(`video-content-${index}`);
+        const btn = document.querySelector(`#video-result-area-${index} button`);
+        statusBadge.className = 'badge bg-danger';
+        statusBadge.innerText = '失败';
+        btn.disabled = false;
+        btn.innerHTML = '重试';
+        contentDiv.innerHTML = `<span class="text-danger small">${e.message}</span>`;
+    }
+}
+
+// Veo视频生成
+async function generateVeoVideo(index) {
+    const veoKey = document.getElementById('veoApiKey').value.trim();
+    if (!veoKey) { alert('请输入 CQTAI API Key'); return; }
+
+    const scene = globalScenes[index];
+    if (!scene.detail_generated) { alert('请先生成分镜脚本！'); return; }
+
+    const statusBadge = document.getElementById(`video-status-${index}`);
+    const contentDiv = document.getElementById(`video-content-${index}`);
+    const btn = document.querySelector(`#video-result-area-${index} button`);
+    const veoModel = document.getElementById('veoModel').value;
+    const veoMode = document.getElementById('veoMode').value;
+    const veoExtendImg = document.getElementById('veoExtendImg').checked;
+    const veoTranslate = document.getElementById('veoTranslate').checked;
+    const videoRatio = (document.getElementById('videoRatio')?.value || '9:16').trim();
+
+    // 获取上传的图片URL
+    const imageUrlsInput = document.getElementById(`veoImageUrls-${index}`);
+    let imageUrls = [];
+    if (imageUrlsInput) {
+        const urls = imageUrlsInput.value.trim();
+        if (urls) {
+            imageUrls = urls.split('\n').map(url => url.trim()).filter(url => url);
+        }
+    }
+
+    // UI 状态
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 生成中...';
+    contentDiv.classList.remove('d-none');
+    contentDiv.innerHTML = `<div class="progress mb-2" style="height: 5px;"><div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 50%"></div></div><div class="text-muted small">Veo正在渲染视频...</div>`;
+    statusBadge.className = 'badge bg-warning text-dark';
+    statusBadge.innerText = '生成中';
+
+    // 启动可中断的操作
+    const abortSignal = beginCancelableOp(`Veo生成视频 #${index + 1}`);
+
+    try {
+        const result = await createVeoTask(veoKey, veoModel, scene.video_prompt, veoMode, veoExtendImg, veoTranslate, videoRatio, imageUrls, abortSignal);
+
+        // 检查返回结果类型
+        if (result && result.type === 'direct' && result.url) {
+            // 直接返回了视频URL
+            updateVideoUI(index, 'SUCCESS', result.url, null);
+            videoTasks[index] = { url: result.url, status: 'SUCCESS' };
+            return { status: 'SUCCESS', url: result.url };
+        } else if (result && typeof result === 'string') {
+            // 返回了任务ID，需要轮询
+            const taskId = result;
+            videoTasks[index] = { taskId, status: 'PROCESSING' };
+            statusBadge.innerText = '生成中';
+            contentDiv.innerHTML = `<div class="progress mb-2" style="height: 5px;"><div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" style="width: 50%"></div></div><div class="text-muted small">Veo渲染中，请稍候...</div>`;
+
+            // 返回一个"完成Promise"，方便批量模式做真正的并发控制
+            return pollVeoResult(veoKey, taskId, index, abortSignal);
+        }
+
+        throw new Error("Veo返回结果格式错误");
+
+    } catch (e) {
+        console.error(e);
+        const statusBadge = document.getElementById(`video-status-${index}`);
+        const contentDiv = document.getElementById(`video-content-${index}`);
+        const btn = document.querySelector(`#video-result-area-${index} button`);
         statusBadge.className = 'badge bg-danger';
         statusBadge.innerText = '失败';
         btn.disabled = false;
@@ -886,8 +1157,17 @@ async function generateSingleVideo(index) {
 }
 
 async function generateAllVideos() {
-    const zhipuKey = document.getElementById('zhipuApiKey').value.trim();
-    if (!zhipuKey) { alert('请先输入智谱 AI API Key'); return; }
+    const zhipuPlatform = document.getElementById('zhipuPlatform');
+    const veoPlatform = document.getElementById('veoPlatform');
+
+    // 验证API Key
+    if (zhipuPlatform.checked) {
+        const zhipuKey = document.getElementById('zhipuApiKey').value.trim();
+        if (!zhipuKey) { alert('请先输入智谱 AI API Key'); return; }
+    } else if (veoPlatform.checked) {
+        const veoKey = document.getElementById('veoApiKey').value.trim();
+        if (!veoKey) { alert('请先输入 CQTAI API Key'); return; }
+    }
 
     const CONCURRENT_LIMIT = 2; // 视频生成并发稍微低一点，防止账号限流
     const pending = [];
@@ -971,38 +1251,12 @@ async function optimizeTopic() {
     if (!apiKey) { alert('请先输入 DeepSeek API Key'); return; }
 
     const topicInput = document.getElementById('topic');
-    const rawContent = topicInput.value; // 获取输入框内的完整文本
+    const rawContent = topicInput.value.trim(); 
+    
     const instructionInput = document.getElementById('topic-optimize-input');
     const instruction = instructionInput.value.trim();
 
-    // 1. 智能提取：分离“用户主题”
-    let currentTopic = rawContent;
-    
-    // 尝试匹配已生成的格式，提取 **视频主题** 后的内容
-    // 匹配规则：找 "**视频主题**" 或 "视频主题：" 开头，直到遇到下一个 "**" 或结束
-    const themeMatch = rawContent.match(/(?:\*\*视频主题\*\*|视频主题)[:：]?\s*([\s\S]*?)(\n\*\*|\n\n|$)/);
-    if (themeMatch && themeMatch[1]) {
-        currentTopic = themeMatch[1].trim();
-    } else {
-        // 旧逻辑：截取 AI 关键词之前的部分
-        const aiKeywords = [
-            '**画面风格**', '画面风格：', '镜头设计：', '人物要求：', '屋内设计：', '整体要求：',
-            '视觉风格：', '核心创意：', '主体与场景要求：'
-        ];
-        let splitIndex = -1;
-        for (const kw of aiKeywords) {
-            const idx = rawContent.indexOf(kw);
-            if (idx !== -1) {
-                if (splitIndex === -1 || idx < splitIndex) splitIndex = idx;
-            }
-        }
-        if (splitIndex !== -1) {
-            currentTopic = rawContent.substring(0, splitIndex).trim();
-        }
-    }
-
-    // 只要有输入内容或者有指令即可
-    if (!currentTopic && !instruction) {
+    if (!rawContent && !instruction) {
         alert('请先输入一些基础想法或优化指令');
         return;
     }
@@ -1011,55 +1265,63 @@ async function optimizeTopic() {
     const undoBtn = document.getElementById('undo-topic-btn');
     const originalIcon = btn.innerHTML;
     
+    // 提示文案改为“灵感发散中”，暗示这是一个多选项的过程
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 规划中...';
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 灵感发散中...';
 
     try {
         const abortSignal = beginCancelableOp('优化视频创意');
-
-        // 备份当前完整内容以便撤销
         lastTopicContent = rawContent;
 
-        const systemPrompt = `你是一位AI视频制作架构师。你的任务是将用户输入的“核心主题”重构为一份**完整、专业、结构化**的视频策划方案。
-这不仅是给用户看的，更是给后续AI生成环节（分镜、视频生成）使用的**标准执行单**。
+        // --- 核心修改：System Prompt 改为“灵感库”模式 ---
+        const systemPrompt = `你是一位**视觉灵感缪斯**。用户的输入只是一个基础想法，你需要提供**多样化、发散性**的视觉参考，而不是固定某一种风格。
 
-**请严格遵守以下输出格式（直接输出全部内容，覆盖原文本）：**
-**视频主题**：[在此处保留并优化用户的主题，保持核心立意不变]
-**画面风格**：[描述整体画风、色调、光影质感。例如：“偏写实风格，低饱和度暖光，电影胶片质感”]
-**镜头设计**：
-- [条目化列出运镜逻辑。例如：“采用第一人称视角（FPV）...”]
-- [例如：“镜头由远及近，平稳推拉...”]
-**主体与场景细节**：
-- [描述主要人物或核心主体特征]
-- [描述环境背景、关键道具、必须出现的细节（堆叠名词）]
-**整体要求**：
-- [描述视频节奏、情感基调]
-- [避坑指南（如避免变形、避免文字水印等）]
+你的目标是建立一个“视觉关键词库”，供后续创作自由选择。
+
+请严格按照以下格式输出（不要写长难句，只列出关键词和选项）：
+
+**原始核心**：[简练概括用户原本的内容，不做改动]
+
+**风格方向参考（提供3种截然不同的可能性）**：
+> *方向A（写实/电影感）*：[列出关键词。如：8K分辨率、IMAX画幅、真实光影、物理渲染]
+> *方向B（艺术/风格化）*：[列出关键词。如：油画质感、赛博朋克、黑白黑色电影、定格动画]
+> *方向C（情绪/抽象）*：[列出关键词。如：梦幻光斑、极简主义、意识流、故障艺术]
+
+**氛围与情绪关键词（Tag Cloud）**：
+[列出10-15个形容词，涵盖不同侧面。如：孤独的、宏大的、诡异的、温馨的、易碎的、粗糙的...]
+
+**光影与镜头灵感**：
+* [光影]：[提供多种光效选择，如：丁达尔光 / 霓虹侧光 / 柔和漫射光]
+* [运镜]：[提供多种视角建议，如：上帝视角 / 蚂蚁视角 / 希区柯克变焦]
+
 **原则**：
-1. **全量输出**：输出结果必须包含“**视频主题**”这一项，且放在第一行。
-2. **指令清晰**：多用“采用...”、“呈现...”、“聚焦...”等动词。
-3. **细节丰富**：不要写空洞的形容词，要写画面里具体能看到什么。`;
+1. **不做决定**：不要说“建议采用...”，而是列出“可以是...也可以是...”。
+2. **保留可能性**：让用户觉得这个创意既可以拍成科幻片，也可以拍成文艺片。
+3. **格式整洁**：使用列表和短语，方便一眼扫视。`;
 
         const userPrompt = `
-核心主题：${currentTopic || '（用户未提供，请基于下方指令自由发挥）'}
-${instruction ? `额外指令/偏好：${instruction}` : ''}
+用户原始内容：${rawContent || '（用户未提供，请基于指令提供通用灵感）'}
+额外指令：${instruction || '请提供丰富的视觉参考方向'}
 
-请输出完整的策划方案：`;
+请输出灵感参考方案：`;
 
-        const optimizedText = await callDeepSeek(apiKey, systemPrompt, userPrompt, 1024, 60000, abortSignal);
+        // 适当增加 max_tokens，因为要输出多种选项
+        const optimizedText = await callDeepSeek(apiKey, systemPrompt, userPrompt, 1500, 60000, abortSignal);
         
-        // 更新内容
-        const cleanText = optimizedText.replace(/^["']|["']$/g, '').trim(); // 去除可能的首尾引号
+        const cleanText = optimizedText.replace(/^["']|["']$/g, '').trim();
         
-        // 覆盖回填：直接使用 AI 返回的完整内容（包含主题+细节），实现“修改”而非“追加”
-        topicInput.value = cleanText;
+        // 只要包含关键词就认为成功
+        if (cleanText.includes('风格方向') || cleanText.includes('原始核心')) {
+            topicInput.value = cleanText;
+            
+            topicInput.classList.add('bg-success', 'bg-opacity-10');
+            setTimeout(() => topicInput.classList.remove('bg-success', 'bg-opacity-10'), 500);
 
-        // 成功提示动画
-        topicInput.classList.add('bg-success', 'bg-opacity-10');
-        setTimeout(() => topicInput.classList.remove('bg-success', 'bg-opacity-10'), 500);
-
-        // 显示撤销按钮
-        if (undoBtn) undoBtn.style.display = 'inline-block';
+            if (undoBtn) undoBtn.style.display = 'inline-block';
+        } else {
+            // 兜底
+            topicInput.value = cleanText;
+        }
 
     } catch (e) {
         console.error(e);
@@ -1072,7 +1334,6 @@ ${instruction ? `额外指令/偏好：${instruction}` : ''}
         endCancelableOp();
     }
 }
-
 async function optimizeSceneSummary(index) {
     const apiKey = document.getElementById('apiKey').value.trim();
     if (!apiKey) { alert('请先输入 DeepSeek API Key'); return; }
@@ -1192,6 +1453,172 @@ async function createVideoTask(token, prompt) {
     return data.id;
 }
 
+// 创建Veo视频任务
+async function createVeoTask(apiKey, model, prompt, mode, enableExtendImg, enableTranslation, ratio, imageUrls) {
+    const url = VEO_BASE_URL;
+
+    // 检查是否包含Base64图片
+    const hasBase64 = imageUrls && imageUrls.some(url => url.startsWith('data:image/'));
+    
+    if (hasBase64) {
+        throw new Error('Veo API不支持Base64格式的图片。请先将图片上传到图床（如imgur、图壳等），获取公开的图片URL后使用。');
+    }
+
+    // 构建请求体 - 根据CQTAI文档格式
+    const requestBody = {
+        model: model,
+        prompt: prompt,
+        aspectRatio: ratio,  // 视频尺寸：支持 16:9, 9:16, 1:1, 3:4, 4:3
+        enableExtendImg: enableExtendImg || false,  // 将图片扩展成目标比例
+        enableTranslation: enableTranslation !== undefined ? enableTranslation : true  // prompt自动翻译成英文，默认启用
+    };
+
+    // 添加图片URL（如果有）
+    if (imageUrls && imageUrls.length > 0) {
+        requestBody.imageUrls = imageUrls;
+    }
+
+    // 根据模式调整参数
+    if (mode === 'image-to-video' && imageUrls && imageUrls.length > 0) {
+        // 图生视频模式：使用第一张图片
+        requestBody.imageUrls = [imageUrls[0]];
+    } else if (mode === 'first-last-frame' && imageUrls && imageUrls.length >= 2) {
+        // 首尾帧模式：使用两张图片
+        requestBody.imageUrls = [imageUrls[0], imageUrls[1]];
+    }
+
+    console.log("Veo请求参数:", JSON.stringify(requestBody, null, 2));
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+    });
+
+    console.log("Veo响应状态:", response.status);
+
+    if (!response.ok) {
+        const errText = await response.text();
+        console.error("Veo API错误:", errText);
+        throw new Error(`Veo API错误 (${response.status}): ${errText}`);
+    }
+
+    const data = await response.json();
+    console.log("Veo完整响应:", JSON.stringify(data, null, 2));
+
+    // 检查返回的数据结构
+    // Veo生成视频的实际返回格式：{ code: 200, msg: "success", data: "53015c849175413da0f67acc852d37e5" }
+    // data直接是字符串ID，不是对象
+    if (data.code === 200 && data.data) {
+        const taskId = data.data;  // data直接就是ID字符串
+
+        console.log("返回任务ID:", taskId);
+
+        // 直接返回任务ID，需要轮询
+        return taskId;
+    }
+
+    throw new Error("Veo返回数据格式无法解析: " + JSON.stringify(data));
+}
+
+// 轮询Veo视频结果（如果API返回的是任务ID）
+async function pollVeoResult(apiKey, taskId, index, abortSignal) {
+    let retryCount = 0;
+
+    // 轮询策略: 3秒轮询一次,最多20分钟
+    return await new Promise((resolve) => {
+        const intervalId = setInterval(async () => {
+            try {
+                // 检查是否被中断
+                if (abortSignal && abortSignal.aborted) {
+                    clearInterval(intervalId);
+                    updateVideoUI(index, 'TIMEOUT', null, "用户中断了生成");
+                    resolve({ status: 'TIMEOUT', url: null });
+                    return;
+                }
+
+                if (retryCount >= 400) { // 约 20分钟超时 (400 * 3s)
+                    clearInterval(intervalId);
+                    updateVideoUI(index, 'TIMEOUT', null, null);
+                    resolve({ status: 'TIMEOUT', url: null });
+                    return;
+                }
+
+                // 使用GET请求查询任务状态，需要在URL中添加id参数
+                const queryUrl = `${VEO_INFO_URL}?id=${taskId}`;
+                console.log("查询URL:", queryUrl);
+
+                const res = await fetch(queryUrl, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'Accept': 'application/json'
+                    }
+                });
+
+                if (!res.ok) {
+                    console.error("查询响应错误:", res.status);
+                    return;
+                }
+
+                const data = await res.json();
+
+                // Veo的实际返回格式：{ code: 200, msg: "success", data: { id, resultUrl, status, ... } }
+                // 返回单个对象，不是数组
+                if (data.code === 200 && data.data) {
+                    const task = data.data;
+
+                    console.log("Veo任务状态:", task.status, "任务ID:", task.id);
+
+                    // 检查状态
+                    if (task.status === 'succeeded' || task.status === 'completed') {
+                        clearInterval(intervalId);
+                        const videoUrl = task.resultUrl || task.video_url || task.url || null;
+                        console.log("视频URL:", videoUrl);
+                        updateVideoUI(index, 'SUCCESS', videoUrl, null);
+                        resolve({ status: 'SUCCESS', url: videoUrl });
+                    } else if (task.status === 'failed' || task.status === 'error') {
+                        clearInterval(intervalId);
+                        const errorMsg = task.errorMsg || data.msg || "生成失败";
+                        console.error("任务失败:", errorMsg);
+                        updateVideoUI(index, 'FAIL', null, errorMsg);
+                        resolve({ status: 'FAIL', url: null, error: errorMsg });
+                    } else if (task.status === 'running' || task.status === 'processing' || task.status === 'pending') {
+                        // 继续轮询
+                        console.log("任务进行中，继续轮询...");
+                    } else {
+                        console.log("未知状态:", task.status, "继续轮询");
+                    }
+                } else if (data.code === 0 || data.code === 500 || data.code >= 400) {
+                    // 错误响应：code为0、500或4xx都表示失败
+                    clearInterval(intervalId);
+                    const errorMsg = data.msg || "查询失败";
+                    console.error("查询错误 (code " + data.code + "):", errorMsg);
+
+                    // 尝试从data中获取更详细的错误信息
+                    let detailedError = errorMsg;
+                    if (data.data && data.data.errorMsg) {
+                        detailedError = data.data.errorMsg;
+                    }
+
+                    updateVideoUI(index, 'FAIL', null);
+                    resolve({ status: 'FAIL', url: null, error: detailedError });
+                } else {
+                    console.log("未知响应:", JSON.stringify(data));
+                }
+
+                retryCount++;
+            } catch (e) {
+                console.error("轮询Veo结果时出错:", e);
+            }
+        }, 3000); // 3秒轮询一次
+    });
+}
+
 async function pollVideoResult(token, taskId, index) {
     const url = `${ZHIPU_BASE_URL}/async-result/${taskId}`;
     let retryCount = 0;
@@ -1202,7 +1629,7 @@ async function pollVideoResult(token, taskId, index) {
             try {
                 if (retryCount >= 400) { // 约 20分钟超时 (400 * 3s)
                     clearInterval(intervalId);
-                    updateVideoUI(index, 'TIMEOUT', null);
+                    updateVideoUI(index, 'TIMEOUT', null, null);
                     resolve({ status: 'TIMEOUT', url: null });
                     return;
                 }
@@ -1214,12 +1641,13 @@ async function pollVideoResult(token, taskId, index) {
                 if (data.task_status === 'SUCCESS') {
                     clearInterval(intervalId);
                     const videoUrl = data.video_result?.[0]?.url || null;
-                    updateVideoUI(index, 'SUCCESS', videoUrl);
+                    updateVideoUI(index, 'SUCCESS', videoUrl, null);
                     resolve({ status: 'SUCCESS', url: videoUrl });
                 } else if (data.task_status === 'FAIL') {
                     clearInterval(intervalId);
-                    updateVideoUI(index, 'FAIL', null);
-                    resolve({ status: 'FAIL', url: null });
+                    const errorMsg = data.error_msg || data.message || "生成失败";
+                    updateVideoUI(index, 'FAIL', null, errorMsg);
+                    resolve({ status: 'FAIL', url: null, error: errorMsg });
                 }
                 retryCount++;
             } catch (e) {
@@ -1229,27 +1657,99 @@ async function pollVideoResult(token, taskId, index) {
     });
 }
 
-function updateVideoUI(index, status, url) {
+function updateVideoUI(index, status, url, error) {
     const statusBadge = document.getElementById(`video-status-${index}`);
     const contentDiv = document.getElementById(`video-content-${index}`);
     const btn = document.querySelector(`#video-result-area-${index} button`);
-    
+
     if (status === 'SUCCESS') {
         statusBadge.className = 'badge bg-success'; statusBadge.innerText = '完成';
         btn.innerHTML = '<i class="bi bi-check-lg"></i> 完成';
-        contentDiv.innerHTML = `<video src="${url}" controls class="w-100 rounded shadow-sm"></video><div class="mt-2 text-end"><a href="${url}" download="scene_${index}.mp4" class="btn btn-sm btn-outline-success"><i class="bi bi-download"></i></a></div>`;
+
+        // 确保contentDiv可见
+        contentDiv.classList.remove('d-none');
+
+        // 添加视频播放器和下载按钮
+        contentDiv.innerHTML = `
+            <div class="video-player-wrapper mb-3">
+                <video src="${url}" controls class="w-100 rounded shadow-sm" preload="metadata">
+                    您的浏览器不支持视频标签。
+                </video>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mt-2">
+                <small class="text-muted">
+                    <i class="bi bi-film"></i> 视频已生成完成
+                </small>
+                <a href="${url}" download="scene_${index}.mp4" class="btn btn-sm btn-success" target="_blank">
+                    <i class="bi bi-download"></i> 下载视频
+                </a>
+            </div>
+            <div class="mt-2">
+                <a href="${url}" target="_blank" class="btn btn-sm btn-outline-primary w-100">
+                    <i class="bi bi-box-arrow-up-right"></i> 在新窗口打开视频
+                </a>
+            </div>
+        `;
     } else if (status === 'FAIL') {
         statusBadge.className = 'badge bg-danger'; statusBadge.innerText = '失败';
-        btn.disabled = false; btn.innerHTML = '重试';
-        contentDiv.innerHTML = `<span class="text-danger">生成失败</span>`;
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> 重试';
+        contentDiv.classList.remove('d-none');
+
+        // 显示详细的错误信息
+        const errorMessage = error || "生成失败";
+        contentDiv.innerHTML = `
+            <div class="alert alert-danger mb-3">
+                <h6 class="alert-heading"><i class="bi bi-exclamation-triangle"></i> 视频生成失败</h6>
+                <p class="mb-2">${escapeHtml(errorMessage)}</p>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-danger" onclick="generateSingleVideo(${index})">
+                        <i class="bi bi-arrow-counterclockwise"></i> 重试生成
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="toggleErrorDetails(${index})">
+                        <i class="bi bi-info-circle"></i> 查看详细信息
+                    </button>
+                </div>
+                <div id="error-details-${index}" class="d-none mt-2">
+                    <small class="text-muted">
+                        <strong>错误代码：</strong>${error ? error.substring(0, 50) : '未知'}<br>
+                        <strong>建议：</strong><br>
+                        1. 检查API Key是否正确<br>
+                        2. 检查prompt内容是否合适<br>
+                        3. 尝试更换模型或参数
+                    </small>
+                </div>
+            </div>
+        `;
     } else if (status === 'TIMEOUT') {
         statusBadge.className = 'badge bg-secondary'; statusBadge.innerText = '超时';
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> 重试';
+        contentDiv.classList.remove('d-none');
+        contentDiv.innerHTML = `
+            <div class="alert alert-warning mb-3">
+                <h6 class="alert-heading"><i class="bi bi-clock"></i> 生成超时</h6>
+                <p class="mb-2">视频生成超过了20分钟超时限制。</p>
+                <button class="btn btn-sm btn-warning" onclick="generateSingleVideo(${index})">
+                    <i class="bi bi-arrow-counterclockwise"></i> 重试生成
+                </button>
+            </div>
+        `;
     }
 
     // 同步任务状态，方便批量逻辑判断
     if (videoTasks[index]) {
         videoTasks[index].status = status;
         videoTasks[index].url = url || null;
+        videoTasks[index].error = error || null;
+    }
+}
+
+// 切换错误详情显示
+function toggleErrorDetails(index) {
+    const detailsDiv = document.getElementById(`error-details-${index}`);
+    if (detailsDiv) {
+        detailsDiv.classList.toggle('d-none');
     }
 }
 
@@ -1277,7 +1777,7 @@ async function callDeepSeek(apiKey, systemPrompt, userPrompt, maxTokens = 4096, 
 
         const doFetch = async (withResponseFormat) => {
             const controller = new AbortController();
-            // 外部中断（用户点击“中断”）时，联动取消本次请求
+            // 外部中断（用户点击"中断"）时，联动取消本次请求
             if (externalAbortSignal) {
                 if (externalAbortSignal.aborted) {
                     controller.abort();
@@ -1446,10 +1946,123 @@ function showError(msg) {
 }
 function hideError() { document.getElementById('errorAlert').classList.add('d-none'); }
 function copyToClipboard(text) { navigator.clipboard.writeText(text); }
+// 处理图片上传
+function handleImageUpload(index) {
+    const fileInput = document.getElementById(`veoImageUpload-${index}`);
+    const previewContainer = document.getElementById(`image-preview-${index}`);
+    const urlTextarea = document.getElementById(`veoImageUrls-${index}`);
+
+    if (!fileInput || !previewContainer || !urlTextarea) return;
+
+    const files = fileInput.files;
+    if (!files || files.length === 0) return;
+
+    // 清空预览区
+    previewContainer.innerHTML = '';
+    const imageUrls = [];
+
+    // 处理每个上传的文件
+    Array.from(files).slice(0, 2).forEach((file, i) => {
+        // 限制最多2张图片
+        const reader = new FileReader();
+
+        reader.onload = (e) => {
+            const base64 = e.target.result;
+
+            // 创建预览图片
+            const previewImg = document.createElement('img');
+            previewImg.src = base64;
+            previewImg.className = 'border rounded';
+            previewImg.style.width = '100px';
+            previewImg.style.height = '100px';
+            previewImg.style.objectFit = 'cover';
+
+            // 添加删除按钮
+            const wrapper = document.createElement('div');
+            wrapper.className = 'position-relative d-inline-block';
+            wrapper.appendChild(previewImg);
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'btn btn-sm btn-danger position-absolute top-0 end-0 m-1';
+            deleteBtn.innerHTML = '×';
+            deleteBtn.style.borderRadius = '50%';
+            deleteBtn.style.width = '24px';
+            deleteBtn.style.height = '24px';
+            deleteBtn.style.padding = '0';
+            deleteBtn.onclick = () => {
+                wrapper.remove();
+                updateImageUrlList(index);
+            };
+
+            wrapper.appendChild(deleteBtn);
+            previewContainer.appendChild(wrapper);
+
+            // 添加到URL列表
+            imageUrls.push(base64);
+            updateImageUrlList(index, imageUrls);
+        };
+
+        reader.readAsDataURL(file);
+    });
+
+    // 如果上传超过2张，提示用户
+    if (files.length > 2) {
+        alert('最多支持上传2张图片（首尾帧模式需要2张，图生视频模式只需1张）');
+    }
+}
+
+// 更新图片URL列表
+function updateImageUrlList(index, urls) {
+    const previewContainer = document.getElementById(`image-preview-${index}`);
+    const urlTextarea = document.getElementById(`veoImageUrls-${index}`);
+
+    if (!previewContainer || !urlTextarea) return;
+
+    // 如果没有提供urls参数，从预览区提取
+    if (!urls) {
+        const images = previewContainer.querySelectorAll('img');
+        urls = Array.from(images).map(img => img.src);
+    }
+
+    // 更新URL文本框
+    urlTextarea.value = urls.join('\n');
+}
+
 function exportResult() {
     if (!globalScenes) return;
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({concept: globalConcept, scenes: globalScenes}, null, 2));
     const a = document.createElement('a');
     a.href = dataStr; a.download = "storyboard_export.json";
     document.body.appendChild(a); a.click(); a.remove();
+}
+
+// 中断Veo视频生成
+function cancelVeoGeneration(index, controllerName) {
+    try {
+        // 获取AbortController
+        // 由于我们使用全局的可中断机制，这里直接调用cancelCurrentOp
+        cancelCurrentOp();
+
+        // 更新UI显示中断状态
+        const statusBadge = document.getElementById(`video-status-${index}`);
+        const contentDiv = document.getElementById(`video-content-${index}`);
+        const btn = document.querySelector(`#video-result-area-${index} button`);
+
+        statusBadge.className = 'badge bg-secondary';
+        statusBadge.innerText = '已中断';
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> 重新生成';
+
+        contentDiv.innerHTML = `
+            <div class="alert alert-warning mb-3">
+                <h6 class="alert-heading"><i class="bi bi-info-circle"></i> 生成已中断</h6>
+                <p class="mb-2">视频生成已被手动中断，您可以修改参数后重新生成。</p>
+                <button class="btn btn-sm btn-warning" onclick="generateSingleVideo(${index})">
+                    <i class="bi bi-arrow-counterclockwise"></i> 重新生成
+                </button>
+            </div>
+        `;
+    } catch (e) {
+        console.error("中断失败:", e);
+    }
 }
