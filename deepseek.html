@@ -222,14 +222,33 @@
                 margin-top: 1rem;
                 padding: 0 15px;
             }
-            
+
             header {
                 padding: 1.5rem !important;
             }
-            
+
             .display-4 {
                 font-size: 2rem;
             }
+        }
+
+        /* 视频播放器样式 */
+        .video-player-wrapper {
+            background-color: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .video-player-wrapper video {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .video-player-wrapper video:hover {
+            transform: scale(1.02);
+            transition: transform 0.3s ease;
         }
     </style>
 </head>
@@ -266,8 +285,8 @@
                             <div class="mb-3 d-none" id="thirdPartyModelSelect">
                                 <label class="form-label">选择模型</label>
                                 <select class="form-select form-select-sm" id="tpModel">
-                                    <option value="DeepSeek-V3.2" selected>DeepSeek-V3.2 (默认)</option>
-                                    <option value="DeepSeek-V3.2-Exp">DeepSeek-V3.2-Exp (实验版)</option>
+                                    <option value="DeepSeek-V3.2">DeepSeek-V3.2 (默认)</option>
+                                    <option value="DeepSeek-V3.2-Exp" selected>DeepSeek-V3.2-Exp (实验版)</option>
                                     <option value="DeepSeek-V3.1">DeepSeek-V3.1 (极速)</option>
                                 </select>
                             </div>
@@ -288,22 +307,89 @@
                             </div>
                         </div>
 
-                        <!-- 智谱AI 设置 -->
+                        <!-- 视频生成设置 -->
                         <div class="col-md-6 mb-3 border-start">
-                            <h6 class="fw-bold mb-3"><i class="bi bi-film"></i> 智谱AI (视频生成)</h6>
+                            <h6 class="fw-bold mb-3"><i class="bi bi-film"></i> 视频生成平台</h6>
+                            <div class="mb-3">
+                                <label class="form-label">选择平台</label>
+                                <div class="btn-group w-100" role="group">
+                                    <input type="radio" class="btn-check" name="videoPlatform" id="zhipuPlatform" autocomplete="off">
+                                    <label class="btn btn-outline-primary" for="zhipuPlatform">智谱AI</label>
+
+                                    <input type="radio" class="btn-check" name="videoPlatform" id="veoPlatform" autocomplete="off" checked>
+                                    <label class="btn btn-outline-primary" for="veoPlatform">Veo (CQTAI)</label>
+                                </div>
+                            </div>
+                            
+                            <!-- 智谱AI 设置 -->
+                            <div id="zhipuSettings">
+                                <div class="mb-3">
+                                    <label class="form-label">模型选择</label>
+                                    <select class="form-select" id="videoModel">
+                                        <option value="cogvideox-3" selected>CogVideoX-3 (标准)</option>
+                                    </select>
+                                </div>
+                                <div class="mb-2">
+                                    <label for="zhipuApiKey" class="form-label">API Key</label>
+                                    <div class="input-group">
+                                        <input type="password" class="form-control" id="zhipuApiKey" placeholder="智谱AI API Key">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                        <!-- Veo 设置 -->
+                        <div id="veoSettings" class="d-none">
                             <div class="mb-3">
                                 <label class="form-label">模型选择</label>
-                                <select class="form-select" id="videoModel" disabled>
-                                    <option value="cogvideox-3" selected>CogVideoX-3 (标准)</option>
+                                <select class="form-select" id="veoModel">
+                                    <optgroup label="Fast模式 (快速生成)">
+                                        <option value="veo2-fast" selected>veo2-fast (首帧模式)</option>
+                                        <option value="veo3-fast">veo3-fast (首帧/首尾帧模式)</option>
+                                        <option value="veo31-fast">veo31-fast (首帧/首尾帧模式)</option>
+                                        <option value="veo31-fast-ingredients">veo31-fast-ingredients (多图融合,最多3张)</option>
+                                    </optgroup>
+                                    <optgroup label="Quality模式 (高质量)">
+                                        <option value="veo2">veo2 (首帧/首尾帧模式)</option>
+                                        <option value="veo3">veo3 (首帧/首尾帧模式)</option>
+                                        <option value="veo31">veo31 (首帧/首尾帧模式)</option>
+                                    </optgroup>
+                                </select>
+                                <small class="text-muted">首帧模式: 传入一张图片作为首帧; 首尾帧模式: 传入两张图片作为首尾帧</small>
+                            </div>
+                            <div class="mb-2">
+                                <label for="veoApiKey" class="form-label">API Key</label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="veoApiKey" placeholder="CQTAI API Key">
+                                    <a href="https://docs.cqtai.com/veo%E7%94%9F%E6%88%90" target="_blank" class="btn btn-outline-secondary" title="查看Veo API文档">
+                                        <i class="bi bi-book"></i>
+                                    </a>
+                                </div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label">生成模式</label>
+                                <select class="form-select form-select-sm" id="veoMode">
+                                    <option value="text-to-video" selected>文生视频 (Text to Video)</option>
+                                    <option value="image-to-video">图生视频 (Image to Video)</option>
+                                    <option value="first-last-frame">首尾帧生成 (First & Last Frame)</option>
                                 </select>
                             </div>
                             <div class="mb-2">
-                                <label for="zhipuApiKey" class="form-label">API Key</label>
-                                <div class="input-group">
-                                    <input type="password" class="form-control" id="zhipuApiKey" placeholder="智谱AI API Key">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="veoExtendImg">
+                                    <label class="form-check-label" for="veoExtendImg">
+                                        图片扩展 (增加15积分消耗)
+                                    </label>
                                 </div>
                             </div>
-                            <small class="text-muted">用于将分镜Prompt转换为实际视频</small>
+                            <div class="mb-2">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="veoTranslate" checked>
+                                    <label class="form-check-label" for="veoTranslate">
+                                        自动翻译Prompt为英文
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
                         </div>
                     </div>
                 </div>
@@ -379,7 +465,21 @@
                          <select class="form-select" id="videoRatio">
                              <option value="9:16" selected>9:16 (竖屏/短视频)</option>
                              <option value="16:9">16:9 (横屏/电影感)</option>
+                             <option value="1:1">1:1 (正方形)</option>
+                             <option value="3:4">3:4 (竖屏)</option>
+                             <option value="4:3">4:3 (传统电视)</option>
                          </select>
+                    </div>
+                    
+                    <!-- 多场景模式选项 -->
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="multiSceneMode" checked>
+                            <label class="form-check-label" for="multiSceneMode">
+                                <strong>多场景模式</strong> 
+                                <small class="text-muted d-block">启用后，系统将自动检查并优化场景切换和衔接</small>
+                            </label>
+                        </div>
                     </div>
 
                     <!-- 细节与旁白偏好 -->
@@ -432,7 +532,7 @@
                         <div class="step-number" id="step3-num">3</div>
                         <div class="step-content">
                             <div class="step-title">视频生成 (可选)</div>
-                            <div class="step-description">调用智谱AI CogVideoX 模型生成实际视频片段</div>
+                            <div class="step-description">调用智谱AI CogVideoX 或 Veo 模型生成实际视频片段</div>
                         </div>
                         <div id="step3-status"></div>
                     </div>
