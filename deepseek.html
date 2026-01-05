@@ -250,11 +250,131 @@
             transform: scale(1.02);
             transition: transform 0.3s ease;
         }
+
+        /* 拖拽区域样式 */
+        #dropZone {
+            transition: all 0.3s ease;
+        }
+
+        #dropZone {
+            border: 2px dashed #dee2e6 !important;
+            background-color: #f8f9fa !important;
+            transition: all 0.3s ease !important;
+        }
+
+        .drop-zone-active {
+            border-color: #4285f4 !important;
+            background-color: #e8f0fe !important;
+            transform: scale(1.02);
+            box-shadow: 0 8px 16px rgba(66, 133, 244, 0.3);
+        }
+
+        .drop-zone-active .drop-zone-icon {
+            color: #4285f4 !important;
+            transform: scale(1.2);
+            transition: transform 0.3s ease;
+        }
+
+        .drop-zone-active .drop-zone-text {
+            color: #4285f4 !important;
+            font-weight: bold;
+        }
+
+        .uploaded-image-preview {
+            position: relative;
+            width: 100px;
+            height: 100px;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 2px solid #dee2e6;
+        }
+
+        .uploaded-image-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .uploaded-image-preview .delete-btn {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            background: rgba(220, 53, 69, 0.9);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .uploaded-image-preview .delete-btn:hover {
+            background: rgba(220, 53, 69, 1);
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: scale(0.9);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        /* 图片结果拖拽排序样式 */
+        .draggable-image-card {
+            cursor: grab;
+            transition: all 0.3s ease;
+            user-select: none;
+        }
+
+        .draggable-image-card:active {
+            cursor: grabbing;
+        }
+
+        .draggable-image-card.dragging {
+            opacity: 0.5;
+            transform: scale(0.95) rotate(2deg);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        }
+
+        .draggable-image-card.drag-over {
+            border: 2px dashed #4285f4;
+            background-color: #e8f0fe;
+            transform: scale(1.02);
+        }
+
+        .draggable-image-card > .card {
+            cursor: grab;
+        }
+
+        .draggable-image-card > .card:active {
+            cursor: grabbing;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <header class="text-center py-4">
+            <div class="mb-3">
+                <div class="btn-group" role="group">
+                    <input type="radio" class="btn-check" name="mainMode" id="videoMode" autocomplete="off" checked>
+                    <label class="btn btn-light text-primary fw-bold px-4" for="videoMode">
+                        <i class="bi bi-camera-reels me-2"></i>视频分镜生成
+                    </label>
+                    
+                    <input type="radio" class="btn-check" name="mainMode" id="imageMode" autocomplete="off">
+                    <label class="btn btn-light text-success fw-bold px-4" for="imageMode">
+                        <i class="bi bi-image me-2"></i>文生图生成
+                    </label>
+                </div>
+            </div>
             <h1 class="display-4"><i class="bi bi-camera-reels"></i> DeepSeek AI视频分镜生成器</h1>
             <p class="lead">智能规划 • 分镜设计 • 自动生成视频</p>
         </header>
@@ -337,60 +457,199 @@
                                 </div>
                             </div>
                             
-                        <!-- Veo 设置 -->
+                        <!-- Veo/Nano 设置 -->
                         <div id="veoSettings" class="d-none">
                             <div class="mb-3">
-                                <label class="form-label">模型选择</label>
-                                <select class="form-select" id="veoModel">
-                                    <optgroup label="Fast模式 (快速生成)">
-                                        <option value="veo2-fast" selected>veo2-fast (首帧模式)</option>
-                                        <option value="veo3-fast">veo3-fast (首帧/首尾帧模式)</option>
-                                        <option value="veo31-fast">veo31-fast (首帧/首尾帧模式)</option>
-                                        <option value="veo31-fast-ingredients">veo31-fast-ingredients (多图融合,最多3张)</option>
-                                    </optgroup>
-                                    <optgroup label="Quality模式 (高质量)">
-                                        <option value="veo2">veo2 (首帧/首尾帧模式)</option>
-                                        <option value="veo3">veo3 (首帧/首尾帧模式)</option>
-                                        <option value="veo31">veo31 (首帧/首尾帧模式)</option>
-                                    </optgroup>
+                                <label class="form-label">平台类型</label>
+                                <select class="form-select" id="cqtaiPlatform">
+                                    <option value="veo" selected>Veo (视频生成)</option>
+                                    <option value="nano">Nano (图片生成)</option>
                                 </select>
-                                <small class="text-muted">首帧模式: 传入一张图片作为首帧; 首尾帧模式: 传入两张图片作为首尾帧</small>
                             </div>
+
+                            <!-- Veo 模型选择 -->
+                            <div id="veoModelSelect">
+                                <div class="mb-3">
+                                    <label class="form-label">Veo模型选择</label>
+                                    <select class="form-select" id="veoModel">
+                                        <optgroup label="Fast模式 (快速生成)">
+                                            <option value="veo2-fast" selected>veo2-fast (首帧模式)</option>
+                                            <option value="veo3-fast">veo3-fast (首帧/首尾帧模式)</option>
+                                            <option value="veo31-fast">veo31-fast (首帧/首尾帧模式)</option>
+                                            <option value="veo31-fast-ingredients">veo31-fast-ingredients (多图融合,最多3张)</option>
+                                        </optgroup>
+                                        <optgroup label="Quality模式 (高质量)">
+                                            <option value="veo2">veo2 (首帧/首尾帧模式)</option>
+                                            <option value="veo3">veo3 (首帧/首尾帧模式)</option>
+                                            <option value="veo31">veo31 (首帧/首尾帧模式)</option>
+                                        </optgroup>
+                                    </select>
+                                    <small class="text-muted">首帧模式: 传入一张图片作为首帧; 首尾帧模式: 传入两张图片作为首尾帧</small>
+                                </div>
+                            </div>
+
+                            <!-- Nano 模型选择 (默认隐藏) -->
+                            <div id="nanoModelSelect" class="d-none">
+                                <div class="mb-3">
+                                    <label class="form-label">Nano模型选择</label>
+                                    <select class="form-select" id="nanoModelInline">
+                                        <option value="nano-banana" selected>nano-banana (标准画质, 10积分/图 ≈ ¥0.1)</option>
+                                        <option value="nano-banana-pro">nano-banana-pro (高画质, 20积分/图 ≈ ¥0.2)</option>
+                                    </select>
+                                    <small class="text-muted">用于视频分镜中的图片生成</small>
+                                </div>
+                            </div>
+
                             <div class="mb-2">
-                                <label for="veoApiKey" class="form-label">API Key</label>
+                                <label for="veoApiKey" class="form-label">CQTAI API Key</label>
                                 <div class="input-group">
                                     <input type="password" class="form-control" id="veoApiKey" placeholder="CQTAI API Key">
-                                    <a href="https://docs.cqtai.com/veo%E7%94%9F%E6%88%90" target="_blank" class="btn btn-outline-secondary" title="查看Veo API文档">
+                                    <a href="https://docs.cqtai.com/nano%E7%94%9F%E6%88%90" target="_blank" class="btn btn-outline-secondary" title="查看CQTAI API文档">
                                         <i class="bi bi-book"></i>
                                     </a>
                                 </div>
                             </div>
-                            <div class="mb-2">
-                                <label class="form-label">生成模式</label>
-                                <select class="form-select form-select-sm" id="veoMode">
-                                    <option value="text-to-video" selected>文生视频 (Text to Video)</option>
-                                    <option value="image-to-video">图生视频 (Image to Video)</option>
-                                    <option value="first-last-frame">首尾帧生成 (First & Last Frame)</option>
-                                </select>
-                            </div>
-                            <div class="mb-2">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="veoExtendImg">
-                                    <label class="form-check-label" for="veoExtendImg">
-                                        图片扩展 (增加15积分消耗)
-                                    </label>
+
+                            <!-- Veo 特定选项 -->
+                            <div id="veoOptions">
+                                <div class="mb-2">
+                                    <label class="form-label">Veo生成模式</label>
+                                    <select class="form-select form-select-sm" id="veoMode">
+                                        <option value="text-to-video" selected>文生视频 (Text to Video)</option>
+                                        <option value="image-to-video">图生视频 (Image to Video)</option>
+                                        <option value="first-last-frame">首尾帧生成 (First & Last Frame)</option>
+                                    </select>
                                 </div>
-                            </div>
-                            <div class="mb-2">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="veoTranslate" checked>
-                                    <label class="form-check-label" for="veoTranslate">
-                                        自动翻译Prompt为英文
-                                    </label>
+                                <div class="mb-2">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="veoExtendImg">
+                                        <label class="form-check-label" for="veoExtendImg">
+                                            图片扩展 (增加15积分消耗)
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="mb-2">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="veoTranslate" checked>
+                                        <label class="form-check-label" for="veoTranslate">
+                                            自动翻译Prompt为英文
+                                        </label>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                         </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 文生图设置 (仅在文生图模式下显示) -->
+            <section class="card mb-4 d-none" id="imageGenerationSection">
+                <div class="card-header">
+                    <h5><i class="bi bi-image"></i> 图片生成设置</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">生成模式</label>
+                        <div class="btn-group w-100" role="group">
+                            <input type="radio" class="btn-check" name="imageGenMode" id="textToImageMode" autocomplete="off" checked>
+                            <label class="btn btn-outline-primary" for="textToImageMode">文生图</label>
+
+                            <input type="radio" class="btn-check" name="imageGenMode" id="imageToImageMode" autocomplete="off">
+                            <label class="btn btn-outline-primary" for="imageToImageMode">图生图</label>
+                        </div>
+                    </div>
+
+                    <!-- 图生图的上传区域 -->
+                    <div class="mb-3 d-none" id="imageUploadArea">
+                        <label class="form-label">上传参考图片（支持拖拽）</label>
+                        <div id="dropZone" class="border-2 border-dashed rounded p-4 text-center bg-light"
+                             style="min-height: 200px; cursor: pointer;">
+                            <i class="bi bi-cloud-upload display-4 text-muted drop-zone-icon"></i>
+                            <p class="mb-2 mt-3 text-muted drop-zone-text">拖拽图片到此处，或点击选择文件</p>
+                            <input type="file" id="refImageUpload" accept="image/*" multiple style="display: none;">
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="document.getElementById('refImageUpload').click()">
+                                <i class="bi bi-folder2-open"></i> 选择图片
+                            </button>
+                        </div>
+                        <div id="uploadedImagesPreview" class="d-flex gap-2 flex-wrap mt-2"></div>
+                        <small class="text-muted">图生图模式：将使用上传的图片作为参考生成新图片</small>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">模型选择</label>
+                            <select class="form-select" id="nanoModel">
+                                <option value="nano-banana">nano-banana (标准画质, 10积分/图 ≈ ¥0.1)</option>
+                                <option value="nano-banana-pro" selected>nano-banana-pro (高画质, 20积分/图 ≈ ¥0.2)</option>
+                            </select>
+                            <small class="text-muted">默认使用nano-banana-pro，可获得更高质量图片</small>
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">图片比例</label>
+                            <select class="form-select" id="nanoAspectRatio">
+                                <option value="16:9" selected>16:9 (横屏)</option>
+                                <option value="9:16">9:16 (竖屏)</option>
+                                <option value="1:1">1:1 (正方形)</option>
+                                <option value="4:3">4:3 (传统)</option>
+                                <option value="3:4">3:4 (竖屏)</option>
+                                <option value="21:9">21:9 (超宽屏)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">分辨率</label>
+                            <select class="form-select" id="nanoResolution">
+                                <option value="1K">1K</option>
+                                <option value="2K">2K</option>
+                                <option value="4K" selected>4K (默认)</option>
+                            </select>
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">生成数量</label>
+                            <select class="form-select" id="nanoNumImages">
+                                <option value="1" selected>1张</option>
+                                <option value="2">2张</option>
+                                <option value="3">3张</option>
+                                <option value="4">4张</option>
+                            </select>
+                            <small class="text-muted">最多支持4张图片</small>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="nanoPrompt" class="form-label">图片描述 (Prompt)</label>
+                        <textarea class="form-control" id="nanoPrompt" rows="4" placeholder="请输入您想要生成的图片描述，例如：一只穿着宇航服的猫在月球上漫步，背景是璀璨的星空..."></textarea>
+                    </div>
+
+                    <div class="text-center">
+                        <button type="button" class="btn btn-success btn-lg px-5" id="generateImageBtn">
+                            <i class="bi bi-magic"></i> 生成图片
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 文生图结果 -->
+            <section class="card mb-4 d-none" id="imageResultSection">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5><i class="bi bi-images"></i> 图片生成结果</h5>
+                    <div class="btn-group">
+                        <button type="button" class="btn btn-sm btn-outline-danger" id="clearImagesBtn">
+                            <i class="bi bi-trash"></i> 清空全部
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-warning" id="clearFailedImagesBtn">
+                            <i class="bi bi-trash"></i> 清空失败
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="imageResultsContainer" class="row g-3">
+                        <!-- 图片将在这里显示 -->
                     </div>
                 </div>
             </section>
