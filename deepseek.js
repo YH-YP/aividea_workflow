@@ -533,7 +533,12 @@ ${existingSummaries ? `已生成的分镜内容：\n- ${existingSummaries}` : '�
         voiceover: null,
         description: null,
         detail_generated: false,
-        regen_hint: ''
+        regen_hint: '',
+        initial_frame_prompt: null,
+        initial_frame_design: null,
+        initial_frame_url: null,
+        initial_frame_model: null,
+        initial_frame_alternatives: []
     };
 
     globalScenes.push(newScene);
@@ -548,6 +553,241 @@ function updateSceneSummary(index, value) { globalScenes[index].summary = value;
 function updateSceneStyle(index, value) { globalScenes[index].style_guide = value; }
 function updateScenePrompt(index, value) { globalScenes[index].video_prompt = value; }
 function updateSceneHint(index, value) { globalScenes[index].regen_hint = value; }
+function updateInitialFramePrompt(index, value) { globalScenes[index].initial_frame_prompt = value; }
+
+/**
+ * 切换自定义控制面板
+ */
+function toggleCustomControls(index) {
+    const controls = document.getElementById(`custom-frame-controls-${index}`);
+    if (controls) {
+        controls.classList.toggle('d-none');
+    }
+}
+
+/**
+ * 选择备选图片作为主图
+ */
+function selectAlternativeImage(index, altIndex) {
+    const scene = globalScenes[index];
+    if (!scene.initial_frame_alternatives || altIndex >= scene.initial_frame_alternatives.length) {
+        return;
+    }
+
+    // 交换主图和备选图
+    const mainUrl = scene.initial_frame_url;
+    const altUrl = scene.initial_frame_alternatives[altIndex];
+
+    scene.initial_frame_url = altUrl;
+    scene.initial_frame_alternatives[altIndex] = mainUrl;
+
+    // 更新UI
+    renderSceneDetail(index);
+
+    // 显示提示
+    const toast = document.createElement('div');
+    toast.className = 'alert alert-info alert-dismissible fade show position-fixed';
+    toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; max-width: 300px;';
+    toast.innerHTML = `
+        <i class="bi bi-images"></i> 已切换图片
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 2000);
+}
+
+/**
+ * 删除备选图片
+ */
+function removeAlternativeImage(index, altIndex) {
+    const scene = globalScenes[index];
+    if (!scene.initial_frame_alternatives || altIndex >= scene.initial_frame_alternatives.length) {
+        return;
+    }
+
+    // 删除指定的备选图
+    scene.initial_frame_alternatives.splice(altIndex, 1);
+
+    // 更新UI
+    renderSceneDetail(index);
+
+    // 显示提示
+    const toast = document.createElement('div');
+    toast.className = 'alert alert-success alert-dismissible fade show position-fixed';
+    toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; max-width: 300px;';
+    toast.innerHTML = `
+        <i class="bi bi-trash"></i> 已删除备选图
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 2000);
+}
+
+/**
+ * 自动生成初始画面（使用默认模型，不显示提示词）
+ */
+async function autoGenerateInitialFrame(index) {
+    const apiKey = document.getElementById('apiKey').value.trim();
+    if (!apiKey) {
+        alert('请先输入 DeepSeek API Key');
+        return;
+    }
+
+    const scene = globalScenes[index];
+    const detailArea = document.getElementById(`scene-detail-area-${index}`);
+    const initialFrameCard = detailArea.querySelector('.card.border-primary');
+    const cardBody = initialFrameCard?.querySelector('.card-body');
+
+    if (!cardBody) {
+        console.error('找不到初始画面卡片');
+        return;
+    }
+
+    // 显示加载状态
+    cardBody.innerHTML = `
+        <div class="text-center py-3">
+            <div class="spinner-border text-primary mb-2"></div>
+            <p class="text-muted small mb-0">正在生成初始画面...</p>
+            <small class="text-muted">系统将自动生成提示词并使用默认模型</small>
+        </div>
+    `;
+
+    try {
+        const abortSignal = beginCancelableOp(`生成初始画面 #${index + 1}`);
+
+        // 步骤1：生成提示词（自动）
+        const promptResult = await generateInitialFramePrompt(index, abortSignal);
+
+        // 步骤2：直接调用图片生成（使用默认模型 nano-banana-pro）
+        const imageResult = await generateInitialFrameImage(
+            index,
+            promptResult.prompt,
+            'nano-banana-pro', // 默认使用 nano-banana-pro 模型
+            abortSignal
+        );
+
+        // 更新数据
+        globalScenes[index].initial_frame_design = promptResult.design_logic;
+        globalScenes[index].initial_frame_prompt = promptResult.prompt;
+        globalScenes[index].initial_frame_url = imageResult.url;
+        globalScenes[index].initial_frame_model = 'nano-banana-pro';
+
+        console.log('初始画面生成成功:', {
+            url: imageResult.url,
+            model: 'nano-banana-pro',
+            design_logic: promptResult.design_logic
+        });
+
+        // 更新UI
+        renderSceneDetail(index);
+
+        // 显示成功提示
+        const toast = document.createElement('div');
+        toast.className = 'alert alert-success alert-dismissible fade show position-fixed';
+        toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; max-width: 300px;';
+        toast.innerHTML = `
+            <i class="bi bi-check-circle"></i> 初始画面已生成
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+
+    } catch (error) {
+        console.error('生成初始画面失败:', error);
+        cardBody.innerHTML = `
+            <div class="alert alert-danger mb-0">
+                <i class="bi bi-exclamation-triangle"></i> 生成失败: ${escapeHtml(error.message)}
+                <button class="btn btn-sm btn-danger mt-2" onclick="autoGenerateInitialFrame(${index})">
+                    <i class="bi bi-arrow-counterclockwise"></i> 重试
+                </button>
+            </div>
+        `;
+    } finally {
+        endCancelableOp();
+    }
+}
+
+/**
+ * 自定义生成初始画面（使用用户修改的提示词和选择的模型）
+ */
+async function customGenerateInitialFrame(index) {
+    const prompt = document.getElementById(`initial-frame-prompt-${index}`).value.trim();
+    const model = document.getElementById(`initial-frame-model-${index}`).value;
+    const count = parseInt(document.getElementById(`initial-frame-count-${index}`).value);
+
+    if (!prompt) {
+        alert('请输入提示词');
+        return;
+    }
+
+    const cqtaiKey = document.getElementById('veoApiKey').value.trim();
+    if (!cqtaiKey) {
+        alert('请输入 CQTAI API Key');
+        return;
+    }
+
+    const scene = globalScenes[index];
+    const detailArea = document.getElementById(`scene-detail-area-${index}`);
+    const initialFrameCard = detailArea.querySelector('.card.border-primary');
+    const cardBody = initialFrameCard?.querySelector('.card-body');
+
+    // 显示加载状态
+    cardBody.innerHTML = `
+        <div class="text-center py-3">
+            <div class="spinner-border text-primary mb-2"></div>
+            <p class="text-muted small mb-0">正在生成${count}张候选图...</p>
+            <small class="text-muted">使用模型: ${model}</small>
+        </div>
+    `;
+
+    try {
+        const abortSignal = beginCancelableOp(`自定义生成初始画面 #${index + 1}`);
+
+        // 并发生成多张图片
+        const promises = [];
+        for (let i = 0; i < count; i++) {
+            promises.push(generateInitialFrameImage(index, prompt, model, abortSignal));
+        }
+
+        const results = await Promise.all(promises);
+
+        // 更新数据（使用第一张作为主图，其他作为备选）
+        globalScenes[index].initial_frame_prompt = prompt;
+        globalScenes[index].initial_frame_url = results[0].url;
+        globalScenes[index].initial_frame_model = model;
+
+        if (results.length > 1) {
+            globalScenes[index].initial_frame_alternatives = results.slice(1).map(r => r.url);
+        }
+
+        // 更新UI
+        renderSceneDetail(index);
+
+        // 显示成功提示
+        const toast = document.createElement('div');
+        toast.className = 'alert alert-success alert-dismissible fade show position-fixed';
+        toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; max-width: 300px;';
+        toast.innerHTML = `
+            <i class="bi bi-check-circle"></i> 已生成${count}张候选图
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+
+    } catch (error) {
+        console.error('自定义生成失败:', error);
+        cardBody.innerHTML = `
+            <div class="alert alert-danger mb-0">
+                <i class="bi bi-exclamation-triangle"></i> 生成失败: ${escapeHtml(error.message)}
+                <button class="btn btn-sm btn-danger mt-2" onclick="customGenerateInitialFrame(${index})">
+                    <i class="bi bi-arrow-counterclockwise"></i> 重试
+                </button>
+            </div>
+        `;
+    } finally {
+        endCancelableOp();
+    }
+}
 
 // 生成下一个分镜的UI
 function renderNextSceneUI() {
@@ -793,7 +1033,184 @@ async function generateNextScene() {
 }
 
 /**
- * 生成单个分镜的详细脚本 (基于“高保真渲染框架”优化版)
+ * 生成初始画面的提示词（用于图生视频）
+ */
+async function generateInitialFramePrompt(index, abortSignal) {
+    const apiKey = document.getElementById('apiKey').value.trim();
+    const scene = globalScenes[index];
+    const topic = document.getElementById('topic').value.trim();
+    const globalConceptStr = (typeof globalConcept === 'string' ? globalConcept : document.getElementById('globalConcept')?.value || '').trim();
+
+    if (!apiKey) { throw new Error('请先输入 DeepSeek API Key'); }
+
+    const systemPrompt = `你是一位资深的电影视觉导演和 AI 绘画提示词专家，精通 Midjourney、DALL-E 3、Flux 等 AI 绘画模型。
+
+**任务描述：**
+我会为你提供一段视频的"分镜演变内容"（从 A 状态到 B 状态的过程）。请你基于这段描述，为我设计最关键的**"初始画面（Initial Frame）"**。
+
+**设计原则：**
+1. **捕捉起始瞬间**：初始画面应该展现视频的第一帧，让观众一眼就能理解场景的开始状态
+2. **视觉张力**：虽然只是静态画面，但要暗示后续的动态变化（如：雨滴悬空暗示下落、火焰初燃暗示蔓延）
+3. **与分镜风格一致**：必须严格遵循分镜的视觉风格指南（风格、色调、镜头语言）
+4. **突出主体**：初始画面要清晰地展示主体，不要让过多的元素分散注意力
+5. **预留发展空间**：画面布局要为后续的动态变化留出空间（如：左侧留白给物体进入，上方留白给镜头上升）
+
+**输出要求：**
+请将初始画面转化为极其详细的 AI 绘画提示词。你的描述需要包含以下维度：
+
+1. **主体细节**：外貌、材质、服饰、神态
+2. **构图与镜头**：镜头焦距（如 35mm）、构图方式（如特写、黄金分割）、视角（如低仰角）
+3. **光影与色彩**：光源方向、色调（如电影级青橙色调）、氛围感
+4. **环境背景**：具体的空间背景、天气、氛围元素（如烟雾、微尘）
+5. **风格化参数**：画质要求（如 Photorealistic, 8k, Unreal Engine 5 render）
+
+**输出格式（JSON）：**
+{
+    "design_logic": "画面设计逻辑：简述为什么要这样设计第一帧以配合后续视频演变（100-200字）",
+    "prompt": "英文提示词 (Prompt)：直接可用于 Midjourney/DALL-E 3/Flux 的完整提示词，长度 80-150 words",
+}`;
+
+    const userPrompt = `**主题：**${topic}
+
+**整体艺术基调：**${globalConceptStr}
+
+**分镜信息：**
+- 分镜简述：${scene.summary}
+- 视觉风格：${scene.style_guide}
+- 时长：${scene.duration}秒
+
+**任务：**
+请基于以上分镜信息，设计这个分镜的初始画面（第一帧），并生成详细的 AI 绘画提示词。`;
+
+    const resultRaw = await callDeepSeek(apiKey, systemPrompt, userPrompt, 2048, 120000, abortSignal);
+    const result = parseJsonResult(resultRaw);
+
+    return result;
+}
+
+/**
+ * 使用Nano API生成初始画面
+ */
+async function generateInitialFrameImage(index, prompt, model, abortSignal) {
+    const cqtaiKey = document.getElementById('veoApiKey').value.trim();
+    if (!cqtaiKey) {
+        throw new Error('请输入 CQTAI API Key');
+    }
+
+    const url = NANO_BASE_URL;
+
+    // 获取视频比例设置
+    const videoRatio = (document.getElementById('videoRatio')?.value || '9:16').trim();
+
+    // 根据比例设置分辨率
+    let resolution = '1024x1792'; // 默认 9:16
+    if (videoRatio === '16:9') {
+        resolution = '1920x1080';
+    } else if (videoRatio === '1:1') {
+        resolution = '1024x1024';
+    } else if (videoRatio === '3:4' || videoRatio === '4:3') {
+        resolution = '1536x2048';
+    }
+
+    // 构建请求体
+    const requestBody = {
+        model: model,
+        prompt: prompt,
+        aspectRatio: videoRatio, // 使用视频比例
+        resolution: resolution,
+        numImages: 1
+    };
+
+    console.log(`初始画面生成请求 (分镜 ${index}):`, JSON.stringify(requestBody, null, 2));
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${cqtaiKey}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+        const errText = await response.text();
+        console.error("Nano API错误:", errText);
+        throw new Error(`Nano API错误 (${response.status}): ${errText}`);
+    }
+
+    const data = await response.json();
+    console.log(`Nano响应 (分镜 ${index}):`, JSON.stringify(data, null, 2));
+
+    if (data.code === 200 && data.data) {
+        const taskId = data.data;
+        return pollInitialFrameResult(cqtaiKey, taskId, index, abortSignal);
+    }
+
+    throw new Error("Nano返回数据格式无法解析: " + JSON.stringify(data));
+}
+
+/**
+ * 轮询初始画面生成结果
+ */
+async function pollInitialFrameResult(apiKey, taskId, index, abortSignal) {
+    let retryCount = 0;
+
+    return await new Promise((resolve, reject) => {
+        const intervalId = setInterval(async () => {
+            try {
+                if (abortSignal && abortSignal.aborted) {
+                    clearInterval(intervalId);
+                    reject(new Error('已中断'));
+                    return;
+                }
+
+                if (retryCount >= 200) { // 约 10分钟超时
+                    clearInterval(intervalId);
+                    reject(new Error('生成超时'));
+                    return;
+                }
+
+                const queryUrl = `${NANO_INFO_URL}?id=${taskId}`;
+                const res = await fetch(queryUrl, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'Accept': 'application/json'
+                    }
+                });
+
+                if (!res.ok) {
+                    console.error("查询响应错误:", res.status);
+                    return;
+                }
+
+                const data = await res.json();
+
+                if (data.code === 200 && data.data) {
+                    const task = data.data;
+
+                    if (task.status === 'succeeded' || task.status === 'completed') {
+                        clearInterval(intervalId);
+                        const imageUrl = task.resultUrl || task.url || null;
+                        resolve({ status: 'SUCCESS', url: imageUrl });
+                    } else if (task.status === 'failed' || task.status === 'error') {
+                        clearInterval(intervalId);
+                        const errorMsg = task.errorMsg || data.msg || "生成失败";
+                        reject(new Error(errorMsg));
+                    }
+                }
+
+                retryCount++;
+            } catch (e) {
+                console.error("轮询初始画面结果时出错:", e);
+            }
+        }, 3000);
+    });
+}
+
+/**
+ * 生成单个分镜的详细脚本 (基于"高保真渲染框架"优化版)
  */
 async function generateSingleSceneDetail(index, externalAbortSignal) {
     const apiKey = document.getElementById('apiKey').value.trim();
@@ -1018,8 +1435,166 @@ function renderSceneDetail(index) {
     const detailArea = document.getElementById(`scene-detail-area-${index}`);
     const videoArea = document.getElementById(`video-result-area-${index}`);
 
+    // 检查是否已有初始画面
+    const hasInitialFrame = scene.initial_frame_url && scene.initial_frame_prompt;
+
     detailArea.innerHTML = `
         <div class="row">
+            <!-- 初始画面生成区域 -->
+            <div class="col-md-12 mb-3">
+                <div class="card border-primary" style="border-width: 2px;">
+                    <div class="card-header bg-primary text-white py-2 px-3 d-flex justify-content-between align-items-center">
+                        <div>
+                            <i class="bi bi-image"></i> 初始画面生成（用于图生视频）
+                            <small class="text-white-50 ms-2">第一帧设计</small>
+                        </div>
+                        ${!hasInitialFrame ? `
+                            <button class="btn btn-sm btn-light" onclick="autoGenerateInitialFrame(${index})">
+                                <i class="bi bi-magic"></i> 生成初始画面
+                            </button>
+                        ` : `
+                            <button class="btn btn-sm btn-outline-light" onclick="autoGenerateInitialFrame(${index})">
+                                <i class="bi bi-arrow-clockwise"></i> 重新生成
+                            </button>
+                        `}
+                    </div>
+                    <div class="card-body">
+                        ${!hasInitialFrame ? `
+                            <div class="text-center text-muted py-3">
+                                <i class="bi bi-image display-6 mb-2"></i>
+                                <p class="mb-0">点击上方按钮自动生成初始画面</p>
+                                <small>系统将自动生成提示词并使用默认模型生成图片<br>如不满意可手动调整</small>
+                            </div>
+                        ` : `
+                            <!-- 已生成初始画面显示区 -->
+                            <div class="mb-3">
+                                <div class="d-flex gap-3">
+                                    <div class="flex-grow-1">
+                                        <div class="position-relative">
+                                            <img src="${scene.initial_frame_url}" alt="初始画面"
+                                                 class="img-fluid rounded border clickable-image"
+                                                 style="max-height: 400px; width: auto; cursor: pointer; transition: transform 0.2s;"
+                                                 onclick="window.open('${escapeHtml(scene.initial_frame_url)}', '_blank')"
+                                                 onmouseover="this.style.transform='scale(1.02)'"
+                                                 onmouseout="this.style.transform='scale(1)'">
+                                            <span class="position-absolute top-0 start-0 badge bg-success m-2">
+                                                <i class="bi bi-check-circle"></i> 主图
+                                            </span>
+                                            <!-- 悬浮操作按钮 -->
+                                            <div class="position-absolute top-0 end-0 m-2 d-flex flex-column gap-1"
+                                                 style="z-index: 10;">
+                                                <button class="btn btn-sm btn-light border shadow-sm"
+                                                        onclick="event.stopPropagation(); window.open('${escapeHtml(scene.initial_frame_url)}', '_blank')"
+                                                        title="在新窗口查看大图">
+                                                    <i class="bi bi-box-arrow-up-right"></i>
+                                                </button>
+                                                <button class="btn btn-sm btn-success border shadow-sm"
+                                                        onclick="event.stopPropagation(); downloadImage('${escapeHtml(scene.initial_frame_url)}', 'initial_frame_${index}.png')"
+                                                        title="下载图片">
+                                                    <i class="bi bi-download"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- 图片URL显示区 -->
+                                        <div class="mt-2 p-2 bg-light border rounded">
+                                            <label class="form-label small fw-bold mb-1">
+                                                <i class="bi bi-link-45deg"></i> 图片URL（可复制用于图生视频）
+                                            </label>
+                                            <div class="input-group input-group-sm">
+                                                <input type="text" class="form-control form-control-sm font-monospace"
+                                                       id="initial-frame-url-${index}"
+                                                       value="${escapeHtml(scene.initial_frame_url)}"
+                                                       readonly
+                                                       onclick="this.select()"
+                                                       style="font-size: 0.85rem;">
+                                                <button class="btn btn-sm btn-primary" onclick="copyToClipboard('${escapeHtml(scene.initial_frame_url)}'); document.getElementById('initial-frame-url-${index}').select();">
+                                                    <i class="bi bi-clipboard"></i>
+                                                </button>
+                                                <button class="btn btn-sm btn-outline-secondary" onclick="window.open('${escapeHtml(scene.initial_frame_url)}', '_blank')">
+                                                    <i class="bi bi-box-arrow-up-right"></i>
+                                                </button>
+                                            </div>
+                                            <small class="text-muted mt-1 d-block">
+                                                <i class="bi bi-info-circle"></i> 点击输入框可全选URL，复制后粘贴到下方"图生视频"的参考图片URL输入框
+                                            </small>
+                                        </div>
+
+                                        ${scene.initial_frame_alternatives && scene.initial_frame_alternatives.length > 0 ? `
+                                            <div class="mt-2">
+                                                <small class="text-muted">备选图片：</small>
+                                                <div class="d-flex gap-2 mt-1">
+                                                    ${scene.initial_frame_alternatives.map((altUrl, idx) => `
+                                                        <div class="position-relative">
+                                                            <img src="${altUrl}" alt="备选${idx + 1}" class="rounded border" style="width: 80px; height: 80px; object-fit: cover; cursor: pointer;" onclick="selectAlternativeImage(${index}, ${idx})">
+                                                            <button class="btn btn-sm btn-danger position-absolute top-0 end-0 m-1" style="width: 20px; height: 20px; padding: 0; border-radius: 50%;" onclick="event.stopPropagation(); removeAlternativeImage(${index}, ${idx})">×</button>
+                                                        </div>
+                                                    `).join('')}
+                                                </div>
+                                                <small class="text-muted small">点击图片可切换为主图</small>
+                                            </div>
+                                        ` : ''}
+                                    </div>
+                                    <div class="flex-grow-1">
+                                        <label class="form-label small fw-bold text-primary"><i class="bi bi-lightbulb"></i> 设计逻辑</label>
+                                        <div class="p-2 bg-light border rounded small" style="max-height: 250px; overflow-y: auto;">
+                                            ${formatTextToHtml(scene.initial_frame_design)}
+                                        </div>
+                                        <div class="mt-2">
+                                            <small class="text-muted">使用模型：</small>
+                                            <span class="badge bg-secondary">${scene.initial_frame_model || 'nano-banana-pro'}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 自定义控制区（默认折叠） -->
+                            <div id="custom-frame-controls-${index}" class="d-none mt-3 p-3 bg-light border rounded">
+                                <h6 class="mb-3"><i class="bi bi-sliders"></i> 自定义调整</h6>
+
+                                <div class="mb-2">
+                                    <label class="form-label small fw-bold"><i class="bi bi-brush"></i> AI绘画提示词（初始画面）</label>
+                                    <div class="prompt-box">
+                                        <textarea class="form-control form-control-sm" rows="4" id="initial-frame-prompt-${index}" onblur="updateInitialFramePrompt(${index}, this.value)">${escapeHtml(scene.initial_frame_prompt)}</textarea>
+                                        <button class="btn btn-sm btn-light border copy-btn" onclick="copyToClipboard(document.getElementById('initial-frame-prompt-${index}').value)">
+                                            <i class="bi bi-clipboard"></i>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div class="mb-2">
+                                    <label class="form-label small fw-bold">选择模型</label>
+                                    <select class="form-select form-select-sm" id="initial-frame-model-${index}">
+                                        <option value="nano-banana-pro" selected ${scene.initial_frame_model === 'nano-banana-pro' ? 'selected' : ''}>nano-banana-pro（高画质，推荐）</option>
+                                        <option value="nano-banana" ${scene.initial_frame_model === 'nano-banana' ? 'selected' : ''}>nano-banana（标准画质，速度更快）</option>
+                                    </select>
+                                </div>
+
+                                <div class="mb-2">
+                                    <label class="form-label small fw-bold">生成数量</label>
+                                    <select class="form-select form-select-sm" id="initial-frame-count-${index}">
+                                        <option value="1">生成 1 张候选图</option>
+                                        <option value="2">生成 2 张候选图</option>
+                                    </select>
+                                </div>
+
+                                <button class="btn btn-primary btn-sm w-100" onclick="customGenerateInitialFrame(${index})">
+                                    <i class="bi bi-magic"></i> 按自定义设置重新生成
+                                </button>
+                            </div>
+
+                            <!-- 自定义按钮 -->
+                            <div class="text-center mt-2">
+                                <button class="btn btn-sm btn-outline-primary" onclick="toggleCustomControls(${index})">
+                                    <i class="bi bi-pencil"></i> 自定义调整
+                                </button>
+                            </div>
+                        `}
+                    </div>
+                </div>
+            </div>
+
+            <!-- 详细描述 -->
             <div class="col-md-12 mb-2">
                 <small class="text-muted">详细描述：</small> ${formatTextToHtml(scene.description || '')}
             </div>
@@ -1028,7 +1603,7 @@ function renderSceneDetail(index) {
             </div>
             <div class="col-md-12">
                 <div class="prompt-box">
-                    <span class="badge bg-dark mb-1">PROMPT</span>
+                    <span class="badge bg-dark mb-1">视频提示词 (VIDEO PROMPT)</span>
                     <div contenteditable="true" class="editable-prompt" onblur="updateScenePrompt(${index}, this.innerText)">${formatTextToHtml(scene.video_prompt || '')}</div>
                     <button class="btn btn-sm btn-light border copy-btn" onclick="copyToClipboard(globalScenes[${index}].video_prompt)">
                         <i class="bi bi-clipboard"></i>
@@ -2039,6 +2614,62 @@ function showError(msg) {
 }
 function hideError() { document.getElementById('errorAlert').classList.add('d-none'); }
 function copyToClipboard(text) { navigator.clipboard.writeText(text); }
+
+/**
+ * 下载图片（通过fetch获取blob后下载）
+ */
+async function downloadImage(url, filename) {
+    try {
+        console.log('开始下载图片:', url);
+        const response = await fetch(url);
+
+        if (!response.ok) {
+            throw new Error(`下载失败: ${response.status}`);
+        }
+
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        URL.revokeObjectURL(blobUrl);
+
+        console.log('图片下载成功:', filename);
+
+        // 显示成功提示
+        const toast = document.createElement('div');
+        toast.className = 'alert alert-success alert-dismissible fade show position-fixed';
+        toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; max-width: 300px;';
+        toast.innerHTML = `
+            <i class="bi bi-download"></i> 图片已下载: ${filename}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+
+    } catch (error) {
+        console.error('下载图片失败:', error);
+
+        // 失败时尝试在新窗口打开
+        const toast = document.createElement('div');
+        toast.className = 'alert alert-warning alert-dismissible fade show position-fixed';
+        toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; max-width: 350px;';
+        toast.innerHTML = `
+            <i class="bi bi-exclamation-triangle"></i> 自动下载失败，已在新窗口打开图片<br>
+            <small>请手动右键保存图片</small>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 5000);
+
+        window.open(url, '_blank');
+    }
+}
 // 处理图片上传
 function handleImageUpload(index) {
     const fileInput = document.getElementById(`veoImageUpload-${index}`);
