@@ -22,6 +22,8 @@ const API_CONFIG = {
 const ZHIPU_BASE_URL = "https://zhipu-proxy.1963087187.workers.dev";
 const VEO_BASE_URL = "https://api.cqtai.com/api/cqt/generator/veo";  // Veo生成端点（正确）
 const VEO_INFO_URL = "https://api.cqtai.com/api/cqt/info/veo";  // Veo查询端点
+const NANO_BASE_URL = "https://api.cqtai.com/api/cqt/generator/nano";  // Nano图片生成端点
+const NANO_INFO_URL = "https://api.cqtai.com/api/cqt/info/nano";  // Nano查询端点
 
 // 全局状态
 let currentApiConfig = API_CONFIG.thirdParty;
@@ -29,6 +31,8 @@ let globalConcept = null;   // 存储策划大纲
 let globalSeriesAnchor = null;   // 存储系列共同锚点（系列视频的统一特征）
 let globalScenes = [];      // 存储分镜列表
 let videoTasks = {};        // 视频任务状态
+let imageTasks = {};        // 图片任务状态（文生图）
+let currentMainMode = 'video';  // 当前主模式：'video' 或 'image'
 
 // 当前可中断的操作（策划/生成分镜/细化脚本/批量等）
 let currentOpController = null;
@@ -172,6 +176,95 @@ function initUI() {
     veoPlatform.addEventListener('change', updateVideoPlatform);
     // 初始化时，默认选中Veo（根据HTML中的checked属性）
     updateVideoPlatform();
+
+    // 6. 主模式切换（视频/图片）
+    const videoMode = document.getElementById('videoMode');
+    const imageMode = document.getElementById('imageMode');
+    const imageGenerationSection = document.getElementById('imageGenerationSection');
+    const imageResultSection = document.getElementById('imageResultSection');
+    const topicSection = document.querySelector('section.card:nth-of-type(2)'); // 主题设置区域
+
+    const updateMainMode = () => {
+        if (videoMode.checked) {
+            currentMainMode = 'video';
+            // 显示视频生成相关界面
+            topicSection.classList.remove('d-none');
+            imageGenerationSection.classList.add('d-none');
+            imageResultSection.classList.add('d-none');
+            document.getElementById('resultSection').classList.remove('d-none');
+        } else if (imageMode.checked) {
+            currentMainMode = 'image';
+            // 显示文生图相关界面
+            topicSection.classList.add('d-none');
+            imageGenerationSection.classList.remove('d-none');
+            document.getElementById('resultSection').classList.add('d-none');
+        }
+    };
+
+    videoMode.addEventListener('change', updateMainMode);
+    imageMode.addEventListener('change', updateMainMode);
+
+    // 7. CQTAI平台切换（Veo/Nano）
+    const cqtaiPlatform = document.getElementById('cqtaiPlatform');
+    const veoModelSelect = document.getElementById('veoModelSelect');
+    const nanoModelSelect = document.getElementById('nanoModelSelect');
+    const veoOptions = document.getElementById('veoOptions');
+
+    const updateCqtaiPlatform = () => {
+        if (cqtaiPlatform.value === 'veo') {
+            veoModelSelect.classList.remove('d-none');
+            nanoModelSelect.classList.add('d-none');
+            veoOptions.classList.remove('d-none');
+        } else {
+            veoModelSelect.classList.add('d-none');
+            nanoModelSelect.classList.remove('d-none');
+            veoOptions.classList.add('d-none');
+        }
+    };
+
+    cqtaiPlatform.addEventListener('change', updateCqtaiPlatform);
+
+    // 8. 文生图生成按钮
+    document.getElementById('generateImageBtn').addEventListener('click', generateNanoImages);
+    document.getElementById('clearImagesBtn').addEventListener('click', clearImageResults);
+    document.getElementById('clearFailedImagesBtn').addEventListener('click', clearFailedImages);
+
+    // 9. 图生图模式切换
+    const textToImageMode = document.getElementById('textToImageMode');
+    const imageToImageMode = document.getElementById('imageToImageMode');
+    const imageUploadArea = document.getElementById('imageUploadArea');
+
+    const updateImageGenMode = () => {
+        console.log('切换图片生成模式...');
+        if (imageToImageMode.checked) {
+            console.log('切换到图生图模式');
+            imageUploadArea.classList.remove('d-none');
+
+            // 显示区域后延迟重新初始化拖拽功能
+            setTimeout(() => {
+                console.log('重新初始化拖拽上传区域');
+                setupDragAndDrop();
+            }, 100);
+        } else {
+            console.log('切换到文生图模式');
+            imageUploadArea.classList.add('d-none');
+        }
+    };
+
+    textToImageMode.addEventListener('change', updateImageGenMode);
+    imageToImageMode.addEventListener('change', updateImageGenMode);
+
+    // 10. 拖拽上传区域
+    setupDragAndDrop();
+
+    // 11. 图片上传文件选择
+    const refImageUpload = document.getElementById('refImageUpload');
+    refImageUpload.addEventListener('change', (e) => {
+        handleFileUpload(e.target.files);
+    });
+
+    // 12. 页面加载完成后初始化已存在的卡片拖拽
+    initializeExistingDraggableCards();
 }
 
 // ==========================================
@@ -2065,4 +2158,1099 @@ function cancelVeoGeneration(index, controllerName) {
     } catch (e) {
         console.error("中断失败:", e);
     }
+}
+
+// ==========================================
+// 文生图功能 (Nano API)
+// ==========================================
+
+// 生成Nano图片
+async function generateNanoImages() {
+    const cqtaiKey = document.getElementById('veoApiKey').value.trim();
+    if (!cqtaiKey) {
+        alert('请输入 CQTAI API Key');
+        return;
+    }
+
+    const prompt = document.getElementById('nanoPrompt').value.trim();
+    if (!prompt) {
+        alert('请输入图片描述');
+        return;
+    }
+
+    // 检测当前模式
+    const isImageToImage = document.getElementById('imageToImageMode').checked;
+
+    // 如果是图生图模式，检查是否上传了参考图片
+    if (isImageToImage) {
+        const uploadedImage = getUploadedImage();
+        if (!uploadedImage) {
+            alert('请先上传参考图片！');
+            return;
+        }
+    }
+
+    const model = document.getElementById('nanoModel').value;
+    const aspectRatio = document.getElementById('nanoAspectRatio').value;
+    const resolution = document.getElementById('nanoResolution').value;
+    const numImages = parseInt(document.getElementById('nanoNumImages').value);
+
+    // 显示结果区域
+    const resultSection = document.getElementById('imageResultSection');
+    const resultsContainer = document.getElementById('imageResultsContainer');
+    resultSection.classList.remove('d-none');
+
+    // 获取当前已有成功的图片数量，用于继续生成
+    const existingCards = resultsContainer.querySelectorAll('[id^="nano-card-"]');
+    const startIndex = existingCards.length;
+
+    // 为每张图片创建一个占位卡片（追加到已有结果后面）
+    for (let i = 0; i < numImages; i++) {
+        const cardIndex = startIndex + i;
+        const cardCol = document.createElement('div');
+        cardCol.className = 'col-md-6 col-lg-4 draggable-image-card';
+        cardCol.draggable = true;
+        cardCol.dataset.index = cardIndex;
+        cardCol.innerHTML = `
+            <div class="card h-100" id="nano-card-${cardIndex}">
+                <div class="card-body text-center">
+                    <div class="placeholder-glow">
+                        <div class="placeholder bg-secondary rounded" style="height: 300px; width: 100%;"></div>
+                    </div>
+                    <p class="mt-2 text-muted small">
+                        <span class="spinner-border spinner-border-sm"></span> 正在${isImageToImage ? '图生图' : '文生图'} ${cardIndex + 1}...
+                    </p>
+                </div>
+            </div>
+        `;
+        resultsContainer.appendChild(cardCol);
+
+        // 添加拖拽事件监听
+        setupDragSort(cardCol);
+    }
+
+    try {
+        const abortSignal = beginCancelableOp(isImageToImage ? '图生图生成' : '文生图生成');
+
+        // 并发生成多张图片
+        const promises = [];
+        for (let i = 0; i < numImages; i++) {
+            promises.push(createNanoTask(cqtaiKey, model, prompt, aspectRatio, resolution, startIndex + i, abortSignal, isImageToImage));
+        }
+
+        await Promise.all(promises);
+
+    } catch (error) {
+        console.error(error);
+        if (!String(error?.message || '').includes('已中断')) {
+            alert('图片生成失败：' + error.message);
+        }
+    } finally {
+        endCancelableOp();
+    }
+}
+
+// 创建Nano图片生成任务
+async function createNanoTask(apiKey, model, prompt, aspectRatio, resolution, imageIndex, abortSignal, isImageToImage = false) {
+    const url = NANO_BASE_URL;
+
+    // 构建请求体
+    const requestBody = {
+        model: model,
+        prompt: prompt,
+        aspectRatio: aspectRatio,
+        resolution: resolution,
+        numImages: 1  // 每次请求只生成1张图片
+    };
+
+    // 如果是图生图模式，添加参考图片URL
+    if (isImageToImage) {
+        const uploadedImage = getUploadedImage();
+        if (uploadedImage) {
+            requestBody.filesUrl = [uploadedImage];
+            console.log(`图生图模式，使用参考图片`);
+        }
+    }
+
+    console.log(`Nano请求参数 (图片 ${imageIndex}):`, JSON.stringify(requestBody, null, 2));
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+    });
+
+    console.log(`Nano响应状态 (图片 ${imageIndex}):`, response.status);
+
+    if (!response.ok) {
+        const errText = await response.text();
+        console.error("Nano API错误:", errText);
+        throw new Error(`Nano API错误 (${response.status}): ${errText}`);
+    }
+
+    const data = await response.json();
+    console.log(`Nano完整响应 (图片 ${imageIndex}):`, JSON.stringify(data, null, 2));
+
+    // 检查返回的数据结构
+    if (data.code === 200 && data.data) {
+        const taskId = data.data;
+
+        console.log(`Nano返回任务ID (图片 ${imageIndex}):`, taskId);
+
+        // 轮询结果
+        return pollNanoResult(apiKey, taskId, imageIndex, abortSignal);
+    }
+
+    throw new Error("Nano返回数据格式无法解析: " + JSON.stringify(data));
+}
+
+// 轮询Nano图片生成结果
+async function pollNanoResult(apiKey, taskId, imageIndex, abortSignal) {
+    let retryCount = 0;
+
+    // 轮询策略: 3秒轮询一次，最多10分钟
+    return await new Promise((resolve) => {
+        const intervalId = setInterval(async () => {
+            try {
+                // 检查是否被中断
+                if (abortSignal && abortSignal.aborted) {
+                    clearInterval(intervalId);
+                    updateNanoImageUI(imageIndex, 'TIMEOUT', null, "用户中断了生成");
+                    resolve({ status: 'TIMEOUT', url: null });
+                    return;
+                }
+
+                if (retryCount >= 200) { // 约 10分钟超时 (200 * 3s)
+                    clearInterval(intervalId);
+                    updateNanoImageUI(imageIndex, 'TIMEOUT', null, null);
+                    resolve({ status: 'TIMEOUT', url: null });
+                    return;
+                }
+
+                // 使用GET请求查询任务状态
+                const queryUrl = `${NANO_INFO_URL}?id=${taskId}`;
+                console.log(`Nano查询URL (图片 ${imageIndex}):`, queryUrl);
+
+                const res = await fetch(queryUrl, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'Accept': 'application/json'
+                    }
+                });
+
+                if (!res.ok) {
+                    console.error(`Nano查询响应错误 (图片 ${imageIndex}):`, res.status);
+                    return;
+                }
+
+                const data = await res.json();
+
+                if (data.code === 200 && data.data) {
+                    const task = data.data;
+
+                    console.log(`Nano任务状态 (图片 ${imageIndex}):`, task.status, "任务ID:", task.id);
+
+                    // 检查状态
+                    if (task.status === 'succeeded' || task.status === 'completed') {
+                        clearInterval(intervalId);
+                        const imageUrl = task.resultUrl || task.url || null;
+                        console.log(`Nano图片URL (图片 ${imageIndex}):`, imageUrl);
+                        updateNanoImageUI(imageIndex, 'SUCCESS', imageUrl, null);
+                        resolve({ status: 'SUCCESS', url: imageUrl });
+                    } else if (task.status === 'failed' || task.status === 'error') {
+                        clearInterval(intervalId);
+                        const errorMsg = task.errorMsg || data.msg || "生成失败";
+                        console.error(`Nano任务失败 (图片 ${imageIndex}):`, errorMsg);
+                        updateNanoImageUI(imageIndex, 'FAIL', null, errorMsg);
+                        resolve({ status: 'FAIL', url: null, error: errorMsg });
+                    } else if (task.status === 'running' || task.status === 'processing' || task.status === 'pending') {
+                        // 继续轮询
+                        console.log(`Nano任务进行中 (图片 ${imageIndex}), 继续轮询...`);
+                    } else {
+                        console.log(`Nano未知状态 (图片 ${imageIndex}):`, task.status, "继续轮询");
+                    }
+                } else if (data.code === 0 || data.code === 500 || data.code >= 400) {
+                    // 错误响应
+                    clearInterval(intervalId);
+                    const errorMsg = data.msg || "查询失败";
+                    console.error(`Nano查询错误 (图片 ${imageIndex}, code ` + data.code + "):", errorMsg);
+                    updateNanoImageUI(imageIndex, 'FAIL', null);
+                    resolve({ status: 'FAIL', url: null, error: errorMsg });
+                } else {
+                    console.log(`Nano未知响应 (图片 ${imageIndex}):`, JSON.stringify(data));
+                }
+
+                retryCount++;
+            } catch (e) {
+                console.error(`轮询Nano结果时出错 (图片 ${imageIndex}):`, e);
+            }
+        }, 3000); // 3秒轮询一次
+    });
+}
+
+// 更新Nano图片UI
+function updateNanoImageUI(imageIndex, status, url, error) {
+    const cardCol = document.getElementById(`nano-card-${imageIndex}`)?.parentElement;
+    const card = document.getElementById(`nano-card-${imageIndex}`);
+    if (!card) {
+        console.log('未找到卡片元素: nano-card-', imageIndex);
+        return;
+    }
+
+    console.log('更新卡片UI, 索引:', imageIndex, '状态:', status);
+
+    const cardBody = card.querySelector('.card-body');
+
+    if (status === 'SUCCESS') {
+        cardBody.innerHTML = `
+            <div class="position-relative">
+                <img src="${url}" alt="Generated Image ${imageIndex + 1}" class="img-fluid rounded draggable-generated-image" 
+                     style="width: 100%; height: auto; object-fit: cover; cursor: grab;" 
+                     draggable="true" 
+                     data-image-url="${escapeHtml(url)}"
+                     title="拖拽此图片到参考图上传区域">
+            </div>
+            <div class="mt-3 d-flex justify-content-between align-items-center">
+                <small class="text-success">
+                    <i class="bi bi-check-circle"></i> 图片已生成
+                </small>
+                <div class="btn-group">
+                    <a href="${url}" download="nano_image_${imageIndex + 1}.png" class="btn btn-sm btn-success" target="_blank">
+                        <i class="bi bi-download"></i> 下载
+                    </a>
+                    <a href="${url}" target="_blank" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-box-arrow-up-right"></i> 查看
+                    </a>
+                </div>
+            </div>
+        `;
+        
+        // 为生成的图片绑定拖拽事件，使其可以拖拽到上传区域
+        const imgElement = cardBody.querySelector('.draggable-generated-image');
+        if (imgElement) {
+            setupImageDragToUpload(imgElement, url);
+        }
+
+        // 确保外层容器有拖拽属性和事件（关键修复）
+        if (cardCol) {
+            console.log('检查外层容器的拖拽属性...');
+
+            // 确保有必要的类和属性
+            if (!cardCol.classList.contains('draggable-image-card')) {
+                console.log('添加 draggable-image-card 类');
+                cardCol.classList.add('draggable-image-card');
+            }
+
+            if (!cardCol.draggable) {
+                console.log('设置 draggable 属性');
+                cardCol.draggable = true;
+            }
+
+            // 重新绑定拖拽事件（确保事件都正确绑定）
+            console.log('重新绑定拖拽事件到外层容器');
+            // 移除旧的事件监听器
+            const newCardCol = cardCol.cloneNode(true);
+            cardCol.parentNode.replaceChild(newCardCol, cardCol);
+            setupDragSort(newCardCol);
+
+            // 添加拖拽手柄图标，提示可以拖拽
+            const existingHandle = cardBody.querySelector('.drag-handle');
+            if (!existingHandle) {
+                const dragHandle = document.createElement('div');
+                dragHandle.className = 'drag-handle position-absolute';
+                dragHandle.style.cssText = 'top: 10px; right: 10px; background: rgba(66, 133, 244, 0.9); color: white; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; cursor: move; box-shadow: 0 2px 4px rgba(0,0,0,0.2); z-index: 10; pointer-events: none;';
+                dragHandle.innerHTML = '<i class="bi bi-grip-vertical"></i>';
+                cardBody.style.position = 'relative';
+                cardBody.appendChild(dragHandle);
+                console.log('已添加拖拽手柄');
+            }
+
+            console.log('卡片UI更新完成，拖拽功能已重新绑定');
+        }
+    } else if (status === 'FAIL') {
+        cardBody.innerHTML = `
+            <div class="alert alert-danger text-center" style="height: 300px; display: flex; align-items: center; justify-content: center;">
+                <div>
+                    <i class="bi bi-exclamation-triangle display-4"></i>
+                    <p class="mt-2 mb-0">图片生成失败</p>
+                    ${error ? `<small class="text-muted">${escapeHtml(error).substring(0, 50)}</small>` : ''}
+                </div>
+            </div>
+            <button class="btn btn-sm btn-outline-danger mt-2 w-100" onclick="retryNanoImage(${imageIndex})">
+                <i class="bi bi-arrow-counterclockwise"></i> 重试
+            </button>
+        `;
+    } else if (status === 'TIMEOUT') {
+        cardBody.innerHTML = `
+            <div class="alert alert-warning text-center" style="height: 300px; display: flex; align-items: center; justify-content: center;">
+                <div>
+                    <i class="bi bi-clock display-4"></i>
+                    <p class="mt-2 mb-0">生成超时</p>
+                    <small>超过了10分钟的超时限制</small>
+                </div>
+            </div>
+            <button class="btn btn-sm btn-outline-warning mt-2 w-100" onclick="retryNanoImage(${imageIndex})">
+                <i class="bi bi-arrow-counterclockwise"></i> 重试
+            </button>
+        `;
+    }
+}
+
+// 重试生成Nano图片
+function retryNanoImage(imageIndex) {
+    const cqtaiKey = document.getElementById('veoApiKey').value.trim();
+    if (!cqtaiKey) {
+        alert('请输入 CQTAI API Key');
+        return;
+    }
+
+    const prompt = document.getElementById('nanoPrompt').value.trim();
+    if (!prompt) {
+        alert('请输入图片描述');
+        return;
+    }
+
+    const model = document.getElementById('nanoModel').value;
+    const aspectRatio = document.getElementById('nanoAspectRatio').value;
+    const resolution = document.getElementById('nanoResolution').value;
+
+    // 获取指定索引的卡片
+    const card = document.getElementById(`nano-card-${imageIndex}`);
+    if (!card) return;
+
+    const cardBody = card.querySelector('.card-body');
+
+    // 重置卡片状态为生成中
+    cardBody.innerHTML = `
+        <div class="placeholder-glow">
+            <div class="placeholder bg-secondary rounded" style="height: 300px; width: 100%;"></div>
+        </div>
+        <p class="mt-2 text-muted small">
+            <span class="spinner-border spinner-border-sm"></span> 正在重新生成图片 ${imageIndex + 1}...
+        </p>
+    `;
+
+    // 异步重试生成
+    createNanoTask(cqtaiKey, model, prompt, aspectRatio, resolution, imageIndex, null)
+        .catch(error => {
+            console.error('重试失败:', error);
+        });
+}
+
+// 清空图片结果
+function clearImageResults() {
+    if (!confirm('确定要清空所有图片吗？包括已成功生成的图片。')) {
+        return;
+    }
+    const resultsContainer = document.getElementById('imageResultsContainer');
+    if (resultsContainer) {
+        resultsContainer.innerHTML = '';
+    }
+    document.getElementById('imageResultSection').classList.add('d-none');
+}
+
+// 只清除失败的图片
+function clearFailedImages() {
+    const resultsContainer = document.getElementById('imageResultsContainer');
+    if (!resultsContainer) return;
+
+    const cards = resultsContainer.querySelectorAll('[id^="nano-card-"]');
+    let failedCount = 0;
+
+    cards.forEach(card => {
+        // 检查卡片中是否包含失败或超时的标识
+        const cardBody = card.querySelector('.card-body');
+        if (cardBody && (cardBody.querySelector('.alert-danger') || cardBody.querySelector('.alert-warning'))) {
+            card.remove();
+            failedCount++;
+        }
+    });
+
+    // 如果清空后没有卡片了，隐藏结果区域
+    const remainingCards = resultsContainer.querySelectorAll('[id^="nano-card-"]');
+    if (remainingCards.length === 0) {
+        document.getElementById('imageResultSection').classList.add('d-none');
+    }
+
+    if (failedCount > 0) {
+        // 显示成功提示
+        const toast = document.createElement('div');
+        toast.className = 'alert alert-success alert-dismissible fade show position-fixed';
+        toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; max-width: 300px;';
+        toast.innerHTML = `
+            <i class="bi bi-check-circle"></i> 已清除 ${failedCount} 张失败的图片
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+    }
+}
+
+// ==========================================
+// 拖拽上传功能
+// ==========================================
+
+let dropZoneInitialized = false;  // 标记是否已初始化
+
+function setupDragAndDrop() {
+    const dropZone = document.getElementById('dropZone');
+
+    if (!dropZone) {
+        console.log('警告：找不到拖拽区域元素 #dropZone');
+        return;
+    }
+
+    // 防止重复绑定
+    if (dropZoneInitialized) {
+        console.log('拖拽区域已初始化，跳过重复绑定');
+        return;
+    }
+
+    console.log('初始化拖拽上传区域');
+
+    // 阻止默认行为
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, preventDefaults, false);
+        console.log('已绑定事件:', eventName);
+    });
+
+    // 使用dragover来持续高亮（更可靠）
+    dropZone.addEventListener('dragover', (e) => {
+        console.log('拖拽悬停，添加高亮');
+        dropZone.classList.add('drop-zone-active');
+    }, false);
+
+    // drop事件处理
+    dropZone.addEventListener('drop', (e) => {
+        console.log('放下文件到上传区域');
+        dropZone.classList.remove('drop-zone-active');
+        // 阻止事件冒泡，避免触发其他拖拽处理
+        e.stopPropagation();
+        handleDrop(e);
+    }, false);
+
+    // 可选：dragenter进入高亮
+    dropZone.addEventListener('dragenter', (e) => {
+        console.log('拖拽进入区域');
+        dropZone.classList.add('drop-zone-active');
+    }, false);
+
+    // dragleave离开移除高亮（可选，dragover已经处理了）
+    dropZone.addEventListener('dragleave', (e) => {
+        console.log('拖拽离开区域');
+        // 只有真正离开时才移除（不是进入子元素）
+        if (!dropZone.contains(e.relatedTarget)) {
+            dropZone.classList.remove('drop-zone-active');
+        }
+    }, false);
+
+    // 标记为已初始化
+    dropZoneInitialized = true;
+    console.log('拖拽上传区域初始化完成');
+}
+
+function preventDefaults(e) {
+    console.log('阻止默认行为');
+    e.preventDefault();
+    e.stopPropagation();
+}
+
+function handleDrop(e) {
+    console.log('=== 文件放下事件触发 ===');
+    const dt = e.dataTransfer;
+
+    // 首先尝试获取URL（从网页元素拖拽的图片）
+    const textPlain = dt.getData('text/plain');
+    const textUri = dt.getData('text/uri-list');
+    const htmlData = dt.getData('text/html');
+
+    console.log('=== 拖拽数据分析 ===');
+    console.log('text/plain:', textPlain);
+    console.log('text/uri-list:', textUri);
+    console.log('text/html:', htmlData);
+    console.log('files:', dt.files);
+
+    // 提取图片URL的优先级
+    let imageUrl = null;
+
+    // 1. 从text/plain获取（如果它是URL）
+    if (textPlain && (textPlain.trim().startsWith('http://') || textPlain.trim().startsWith('https://'))) {
+        imageUrl = textPlain.trim();
+        console.log('从text/plain提取URL:', imageUrl);
+    }
+    // 2. 从text/uri-list获取
+    else if (textUri && (textUri.trim().startsWith('http://') || textUri.trim().startsWith('https://'))) {
+        imageUrl = textUri.trim();
+        console.log('从text/uri-list提取URL:', imageUrl);
+    }
+    // 3. 从HTML数据提取
+    else if (htmlData) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(htmlData, 'text/html');
+        const img = doc.querySelector('img');
+        if (img && img.src && (img.src.startsWith('http://') || img.src.startsWith('https://'))) {
+            imageUrl = img.src;
+            console.log('从HTML中提取图片URL:', imageUrl);
+        }
+    }
+
+    // 如果提取到了URL，直接使用（优先级最高）
+    if (imageUrl) {
+        console.log('✅ 检测到图片URL，直接使用:', imageUrl);
+        handleImageUrlUpload(imageUrl);
+        return;
+    }
+
+    // 如果没有URL，处理文件上传
+    const files = dt.files;
+    console.log('files 数量:', files ? files.length : 0);
+
+    if (files && files.length > 0) {
+        console.log('开始处理文件上传...');
+        handleFileUpload(files);
+        return;
+    }
+
+    console.warn('⚠️ 没有检测到文件或图片URL');
+    console.warn('收到的数据:', {
+        textPlain: textPlain?.substring(0, 100),
+        textUri: textUri?.substring(0, 100),
+        htmlData: htmlData?.substring(0, 100)
+    });
+}
+
+// 处理从URL上传图片（用于从网页元素拖拽）
+async function handleImageUrlUpload(imageUrl) {
+    console.log('处理图片URL上传:', imageUrl);
+
+    // 如果是Base64数据，直接使用
+    if (imageUrl.startsWith('data:image/')) {
+        console.log('检测到Base64图片数据');
+        addImagePreview(imageUrl, 'generated_image.png');
+        return;
+    }
+
+    // 如果是HTTP/HTTPS URL，直接将URL添加到输入框（不转换Base64）
+    // 因为Veo API本身就支持公开URL，这样更简单高效，避免CORS问题
+    console.log('检测到公开URL，直接添加到输入框:', imageUrl);
+
+    // 尝试找到视频生成区域的图片URL输入框
+    // 当前是否有正在打开的视频生成区域
+    let targetIndex = null;
+    const urlTextareas = document.querySelectorAll('[id^="veoImageUrls-"]');
+    if (urlTextareas.length > 0) {
+        // 找到第一个非空的或者最近操作的
+        for (let textarea of urlTextareas) {
+            if (textarea.value.trim() === '') {
+                targetIndex = textarea.id.replace('veoImageUrls-', '');
+                break;
+            }
+        }
+        // 如果没有找到空的，使用最后一个
+        if (targetIndex === null) {
+            targetIndex = urlTextareas[urlTextareas.length - 1].id.replace('veoImageUrls-', '');
+        }
+    }
+
+    if (targetIndex !== null) {
+        const urlInput = document.getElementById(`veoImageUrls-${targetIndex}`);
+        const previewContainer = document.getElementById(`image-preview-${targetIndex}`);
+
+        if (urlInput && previewContainer) {
+            // 清空并设置新URL
+            urlInput.value = imageUrl;
+            console.log(`已将URL添加到分镜 ${parseInt(targetIndex) + 1} 的输入框`);
+
+            // 显示预览图片（直接使用URL，不转换Base64）
+            previewContainer.innerHTML = '';
+
+            const wrapper = document.createElement('div');
+            wrapper.className = 'position-relative d-inline-block';
+            wrapper.innerHTML = `
+                <img src="${imageUrl}" alt="Preview Image" class="border rounded"
+                     style="width: 100px; height: 100px; object-fit: cover;">
+                <button class="btn btn-sm btn-danger position-absolute top-0 end-0 m-1"
+                        style="border-radius: 50%; width: 24px; height: 24px; padding: 0;"
+                        onclick="this.parentElement.remove(); updateImageUrlList(${targetIndex});">×</button>
+            `;
+            previewContainer.appendChild(wrapper);
+
+            // 更新URL列表
+            updateImageUrlList(targetIndex, [imageUrl]);
+
+            // 显示成功提示
+            const toast = document.createElement('div');
+            toast.className = 'alert alert-success alert-dismissible fade show position-fixed';
+            toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; max-width: 300px;';
+            toast.innerHTML = `
+                <i class="bi bi-check-circle"></i> 图片URL已添加到分镜 #${parseInt(targetIndex) + 1}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+
+            console.log('URL预览已显示');
+            return;
+        }
+    }
+
+    // 如果没有找到视频生成区域，尝试图生图模式的预览区域
+    const imageModePreview = document.getElementById('uploadedImagesPreview');
+    if (imageModePreview) {
+        console.log('使用图生图预览区域显示图片');
+        imageModePreview.innerHTML = '';
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'uploaded-image-preview';
+        wrapper.style.cssText = 'animation: fadeIn 0.5s ease;';
+        wrapper.innerHTML = `
+            <img src="${imageUrl}" alt="Reference Image" style="object-fit: cover; max-width: 200px;">
+            <button class="delete-btn" onclick="removeUploadedImage()" title="删除图片">×</button>
+            <div class="mt-2 p-2 bg-light rounded">
+                <small class="text-muted d-block mb-1">图片URL（可直接复制使用）：</small>
+                <input type="text" class="form-control form-control-sm font-monospace" value="${escapeHtml(imageUrl)}"
+                       readonly style="font-size: 0.85rem; font-family: monospace;"
+                       onclick="this.select()">
+                <small class="text-primary mt-1 d-block">
+                    <i class="bi bi-check-circle"></i> URL已准备好，可直接用于图生视频
+                </small>
+            </div>
+        `;
+        imageModePreview.appendChild(wrapper);
+
+        // 显示成功提示
+        const toast = document.createElement('div');
+        toast.className = 'alert alert-success alert-dismissible fade show position-fixed';
+        toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; max-width: 350px;';
+        toast.innerHTML = `
+            <i class="bi bi-check-circle"></i> 图片已添加（URL可直接使用）
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 4000);
+
+        console.log('✅ 图生图预览已显示');
+        return;
+    }
+
+    // 都没找到
+    console.warn('⚠️ 未找到任何预览区域');
+    alert('图片URL已获取：\n\n' + imageUrl + '\n\n请手动复制URL到需要的输入框中。');
+}
+
+// 使用Cloudflare代理将图片URL转换为Base64（通过代理绕过CORS限制）
+async function convertImageUrlToBase64ViaCloudflare(imageUrl) {
+    console.log('使用Cloudflare代理转换图片:', imageUrl);
+
+    try {
+        // 构建代理URL
+        const proxyUrl = `${ZHIPU_BASE_URL}/proxy-image?url=${encodeURIComponent(imageUrl)}`;
+        console.log('代理URL:', proxyUrl);
+
+        // 通过代理获取图片
+        const response = await fetch(proxyUrl, {
+            method: 'GET',
+            mode: 'cors',
+            credentials: 'omit',
+            cache: 'no-cache'
+        });
+
+        if (!response.ok) {
+            throw new Error(`代理请求失败: ${response.status} ${response.statusText}`);
+        }
+
+        // 获取图片数据并转换为Base64
+        const blob = await response.blob();
+        const reader = new FileReader();
+
+        reader.onload = (e) => {
+            console.log('通过Cloudflare代理成功转换图片');
+            addImagePreview(e.target.result, 'generated_image.png');
+        };
+
+        reader.onerror = (error) => {
+            console.error('Base64转换失败:', error);
+            alert('图片转换失败：' + error.message);
+        };
+
+        reader.readAsDataURL(blob);
+
+    } catch (error) {
+        console.error('Cloudflare代理转换失败:', error);
+
+        // 如果代理失败，尝试直接使用Canvas（作为备选方案）
+        console.log('代理失败，尝试直接Canvas加载...');
+        convertImageUrlToBase64ViaCanvas(imageUrl);
+    }
+}
+
+// 使用Canvas API将图片URL转换为Base64（备选方案，可以绕过部分CORS限制）
+function convertImageUrlToBase64ViaCanvas(imageUrl) {
+    console.log('使用Canvas API转换图片:', imageUrl);
+
+    const img = new Image();
+    img.crossOrigin = 'anonymous'; // 允许跨域（如果服务器支持CORS）
+
+    img.onload = function() {
+        try {
+            // 创建Canvas
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+
+            // 绘制图片到Canvas
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+
+            // 转换为Base64
+            const base64Data = canvas.toDataURL('image/png');
+            console.log('图片转换为Base64成功（通过Canvas）');
+            addImagePreview(base64Data, 'generated_image.png');
+        } catch (canvasError) {
+            console.error('Canvas转换失败:', canvasError);
+            alert('图片加载失败：' + canvasError.message + '\n\n如果图片URL是公开可访问的，可以直接在URL输入框中粘贴使用。');
+        }
+    };
+
+    img.onerror = function(error) {
+        console.error('图片加载失败:', error);
+        alert('图片加载失败：无法访问该图片URL。\n\n可能的原因：\n1. 图片URL需要CORS支持\n2. 图片URL不可访问\n3. 网络连接问题\n\n建议：如果图片URL是公开可访问的，可以直接在URL输入框中粘贴使用。');
+    };
+
+    // 开始加载图片
+    img.src = imageUrl;
+}
+
+// 处理文件上传
+function handleFileUpload(files) {
+    if (!files || files.length === 0) {
+        console.log('文件上传失败：没有文件');
+        return;
+    }
+
+    // 限制最多上传1张参考图片（图生图模式）
+    const file = files[0];
+    console.log('处理文件:', file.name, '类型:', file.type, '大小:', file.size);
+
+    if (!file.type.startsWith('image/')) {
+        alert('请上传图片文件！');
+        console.log('文件类型错误:', file.type);
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        console.log('文件读取成功，准备显示预览');
+        addImagePreview(e.target.result, file.name);
+    };
+    reader.onerror = (error) => {
+        console.error('文件读取失败:', error);
+        alert('图片读取失败，请重试！');
+    };
+    reader.readAsDataURL(file);
+}
+
+// 添加图片预览
+function addImagePreview(imageData, fileName) {
+    const previewContainer = document.getElementById('uploadedImagesPreview');
+    if (!previewContainer) {
+        console.log('预览容器不存在');
+        return;
+    }
+
+    console.log('添加图片预览:', fileName);
+
+    // 清空之前的预览
+    previewContainer.innerHTML = '';
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'uploaded-image-preview';
+    wrapper.style.cssText = 'animation: fadeIn 0.5s ease;';
+    wrapper.innerHTML = `
+        <img src="${imageData}" alt="${fileName}" style="object-fit: cover;">
+        <button class="delete-btn" onclick="removeUploadedImage()" title="删除图片">×</button>
+    `;
+    previewContainer.appendChild(wrapper);
+
+    console.log('图片预览已添加到页面');
+
+    // 显示成功提示
+    const toast = document.createElement('div');
+    toast.className = 'alert alert-success alert-dismissible fade show position-fixed';
+    toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; max-width: 300px;';
+    toast.innerHTML = `
+        <i class="bi bi-check-circle"></i> 图片已上传
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+
+// 删除上传的图片
+function removeUploadedImage() {
+    const previewContainer = document.getElementById('uploadedImagesPreview');
+    if (previewContainer) {
+        console.log('删除上传的参考图片');
+
+        // 添加淡出动画
+        const preview = previewContainer.querySelector('.uploaded-image-preview');
+        if (preview) {
+            preview.style.transition = 'all 0.3s ease';
+            preview.style.opacity = '0';
+            preview.style.transform = 'scale(0.9)';
+
+            setTimeout(() => {
+                previewContainer.innerHTML = '';
+                console.log('参考图片已清空');
+
+                // 显示提示
+                const toast = document.createElement('div');
+                toast.className = 'alert alert-info alert-dismissible fade show position-fixed';
+                toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; max-width: 300px;';
+                toast.innerHTML = `
+                    <i class="bi bi-info-circle"></i> 参考图片已删除
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                `;
+                document.body.appendChild(toast);
+                setTimeout(() => toast.remove(), 3000);
+            }, 300);
+        }
+    }
+}
+
+// 获取上传的图片数据（用于图生图）
+function getUploadedImage() {
+    const previewContainer = document.getElementById('uploadedImagesPreview');
+    if (!previewContainer) return null;
+
+    const img = previewContainer.querySelector('img');
+    if (!img) return null;
+
+    return img.src;
+}
+
+// ==========================================
+// 图片结果拖拽排序功能
+// ==========================================
+
+// 使用WeakMap来跟踪每个元素的事件监听器，避免重复绑定
+const dragEventListeners = new WeakMap();
+
+function setupDragSort(cardElement) {
+    if (!cardElement) return;
+
+    console.log('设置拖拽排序，元素:', cardElement.dataset.index);
+
+    // 如果已经绑定过，先移除
+    if (dragEventListeners.has(cardElement)) {
+        console.log('移除旧的拖拽事件监听器');
+        const listeners = dragEventListeners.get(cardElement);
+        cardElement.removeEventListener('dragstart', listeners.dragstart);
+        cardElement.removeEventListener('dragend', listeners.dragend);
+        cardElement.removeEventListener('dragover', listeners.dragover);
+        cardElement.removeEventListener('dragenter', listeners.dragenter);
+        cardElement.removeEventListener('dragleave', listeners.dragleave);
+        cardElement.removeEventListener('drop', listeners.drop);
+    }
+
+    // 定义事件处理函数（保存引用以便后续移除）
+    // 使用箭头函数确保this指向cardElement
+    const dragStartHandler = (e) => {
+        // 检查是否拖拽的是图片元素（而不是整个卡片）
+        const img = e.target.closest('.draggable-generated-image');
+        if (img) {
+            // 如果拖拽的是图片，完全跳过卡片的事件处理
+            // 让图片自己的setupImageDragToUpload来处理
+            console.log('检测到图片拖拽，跳过卡片事件处理');
+            return;
+        }
+
+        // 否则是卡片排序拖拽
+        draggedItem = cardElement;
+        cardElement.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/html', cardElement.innerHTML);
+        console.log('开始拖拽卡片排序:', cardElement.dataset.index);
+    };
+
+    const dragEndHandler = (e) => {
+        cardElement.classList.remove('dragging');
+        draggedItem = null;
+
+        // 移除所有卡片的drag-over样式
+        document.querySelectorAll('.draggable-image-card').forEach(card => {
+            card.classList.remove('drag-over');
+        });
+
+        console.log('拖拽结束');
+    };
+
+    const dragOverHandler = (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        return false;
+    };
+
+    const dragEnterHandler = (e) => {
+        if (cardElement !== draggedItem) {
+            cardElement.classList.add('drag-over');
+        }
+    };
+
+    const dragLeaveHandler = (e) => {
+        cardElement.classList.remove('drag-over');
+    };
+
+    const dropHandler = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        cardElement.classList.remove('drag-over');
+
+        console.log('放置元素');
+        console.log('拖拽元素:', draggedItem);
+        console.log('目标元素:', cardElement);
+
+        if (draggedItem !== cardElement) {
+            // 获取容器
+            const container = document.getElementById('imageResultsContainer');
+
+            // 获取拖拽项目和目标项目
+            const draggedIndex = parseInt(draggedItem.dataset.index);
+            const targetIndex = parseInt(cardElement.dataset.index);
+
+            console.log('拖拽索引:', draggedIndex, '目标索引:', targetIndex);
+
+            // 交换位置
+            if (draggedIndex < targetIndex) {
+                // 向后拖
+                container.insertBefore(draggedItem, cardElement.nextSibling);
+            } else {
+                // 向前拖
+                container.insertBefore(draggedItem, cardElement);
+            }
+
+            // 更新索引
+            updateCardIndices();
+        }
+
+        return false;
+    };
+
+    // 绑定事件
+    cardElement.addEventListener('dragstart', dragStartHandler);
+    cardElement.addEventListener('dragend', dragEndHandler);
+    cardElement.addEventListener('dragover', dragOverHandler);
+    cardElement.addEventListener('dragenter', dragEnterHandler);
+    cardElement.addEventListener('dragleave', dragLeaveHandler);
+    cardElement.addEventListener('drop', dropHandler);
+
+    // 保存监听器引用
+    dragEventListeners.set(cardElement, {
+        dragstart: dragStartHandler,
+        dragend: dragEndHandler,
+        dragover: dragOverHandler,
+        dragenter: dragEnterHandler,
+        dragleave: dragLeaveHandler,
+        drop: dropHandler
+    });
+
+    // 添加拖拽手柄样式提示
+    cardElement.style.cursor = 'move';
+
+    console.log('拖拽事件已绑定');
+}
+
+let draggedItem = null;
+
+// 更新所有卡片的索引
+function updateCardIndices() {
+    const cards = document.querySelectorAll('.draggable-image-card');
+    cards.forEach((card, index) => {
+        card.dataset.index = index;
+    });
+    console.log('已更新卡片索引，共', cards.length, '张');
+}
+
+// 为生成的图片设置拖拽到上传区域的功能
+function setupImageDragToUpload(imgElement, imageUrl) {
+    if (!imgElement) return;
+
+    console.log('为图片设置拖拽功能:', imageUrl);
+
+    // 移除可能存在的旧事件监听器
+    const newImg = imgElement.cloneNode(true);
+    imgElement.parentNode.replaceChild(newImg, imgElement);
+
+    // 绑定dragstart事件，将图片URL存储到dataTransfer中
+    newImg.addEventListener('dragstart', (e) => {
+        console.log('=== 开始拖拽生成的图片 ===');
+        console.log('拖拽的图片URL:', imageUrl);
+        console.log('dataTransfer对象:', e.dataTransfer);
+
+        // 设置拖拽效果
+        e.dataTransfer.effectAllowed = 'copyLink'; // 使用copyLink表示链接复制
+
+        // 存储图片URL，支持多种格式以便兼容
+        // 注意：必须在事件开始时同步设置，不能异步
+        e.dataTransfer.setData('text/plain', imageUrl);
+        console.log('已设置 text/plain:', imageUrl);
+
+        e.dataTransfer.setData('text/uri-list', imageUrl);
+        console.log('已设置 text/uri-list:', imageUrl);
+
+        // 也存储HTML格式，包含img标签
+        const htmlContent = `<img src="${escapeHtml(imageUrl)}" alt="Generated Image">`;
+        e.dataTransfer.setData('text/html', htmlContent);
+        console.log('已设置 text/html:', htmlContent);
+
+        // 设置拖拽时的视觉效果
+        newImg.style.opacity = '0.5';
+
+        console.log('=== dataTransfer设置完成 ===');
+    }, false);
+
+    // 拖拽结束时恢复样式
+    newImg.addEventListener('dragend', (e) => {
+        console.log('拖拽生成的图片结束');
+        newImg.style.opacity = '1';
+    }, false);
+
+    // 添加视觉提示
+    newImg.style.cursor = 'grab';
+    newImg.addEventListener('mousedown', () => {
+        newImg.style.cursor = 'grabbing';
+    });
+    newImg.addEventListener('mouseup', () => {
+        newImg.style.cursor = 'grab';
+    });
+
+    console.log('已为生成的图片设置拖拽到上传区域功能');
+}
+
+// 初始化页面加载时已存在的可拖拽卡片
+function initializeExistingDraggableCards() {
+    // 延迟执行，确保DOM完全加载
+    setTimeout(() => {
+        const existingCards = document.querySelectorAll('.draggable-image-card');
+        console.log('初始化已存在的拖拽卡片，共', existingCards.length, '个');
+        existingCards.forEach(card => {
+            setupDragSort(card);
+        });
+        
+        // 同时初始化已存在的生成图片的拖拽功能
+        const existingImages = document.querySelectorAll('.draggable-generated-image');
+        console.log('初始化已存在的生成图片拖拽功能，共', existingImages.length, '个');
+        existingImages.forEach(img => {
+            const imageUrl = img.getAttribute('data-image-url') || img.src;
+            if (imageUrl) {
+                setupImageDragToUpload(img, imageUrl);
+            }
+        });
+    }, 500);
 }
